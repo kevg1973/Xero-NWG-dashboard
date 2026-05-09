@@ -1,2 +1,2 @@
-# northwest-guitars-dashboard
+# xero-nwg-dashboard
 dashboard ot better understand profitability
