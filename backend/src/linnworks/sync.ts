@@ -104,17 +104,18 @@ export type SyncSummary = {
 export type SyncMode = "incremental" | "full";
 
 /**
- * Fetch all POs (no DateFrom filter) every sync. Linnworks holds ~3000 POs of
- * history; paging at 200/page is still seconds, and a date filter would
- * silently drop older POs whose Linnworks fields (status, delivery date,
- * value) have just changed. Both modes currently do the same thing — we keep
- * them as separate functions to allow future divergence (e.g., if volume
- * forces incremental to narrow scope).
+ * Rolling 12-month window. Linnworks holds ~3000 POs of history; pulling all
+ * of them is feasible but wasteful. Tradeoff accepted: if Linnworks edits a
+ * status/value on a 13+ month-old PO it won't propagate until a manual full
+ * sync. Both modes currently do the same thing — kept as separate functions
+ * to allow future divergence (e.g. incremental could narrow further).
  */
 export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promise<SyncSummary> {
   const startedAt = Date.now();
 
-  const headers = await searchAllPurchaseOrders({});
+  const fromDate = new Date();
+  fromDate.setMonth(fromDate.getMonth() - 12);
+  const headers = await searchAllPurchaseOrders({ fromDate });
   const syncedAt = new Date().toISOString();
   const rows = headers.map((h) => mapHeader(h, syncedAt));
 
