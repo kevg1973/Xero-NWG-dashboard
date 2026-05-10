@@ -7,6 +7,7 @@ import { startCron } from "./cron.js";
 const app = express();
 
 const ALLOWED_ORIGINS = [
+  "https://dashboard.northwestguitars.co.uk",
   "https://xero-nwg-dashboard.pages.dev",
   "http://localhost:5173",
 ];
