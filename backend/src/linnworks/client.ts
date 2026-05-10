@@ -34,6 +34,10 @@ async function authorize(): Promise<Session> {
     throw new Error(`Linnworks auth response missing Token/Server: ${text}`);
   }
 
+  if (env.LINNWORKS_DEBUG) {
+    console.log("[linnworks] auth ok, server=", json.Server);
+  }
+
   return { token: json.Token, server: json.Server.replace(/\/+$/, "") };
 }
 
@@ -70,6 +74,13 @@ export async function linnworksRequest<T = unknown>(
   path: string,
   params: Record<string, unknown> = {},
 ): Promise<T> {
+  const body = encodeParams(params);
+
+  if (env.LINNWORKS_DEBUG) {
+    console.log(`[linnworks] POST ${path}`);
+    console.log(`[linnworks] body: ${body}`);
+  }
+
   const send = async (session: Session) => {
     const url = `${session.server}/api/${path.replace(/^\/+/, "")}`;
     return request(url, {
@@ -78,7 +89,7 @@ export async function linnworksRequest<T = unknown>(
         Authorization: session.token,
         "content-type": "application/x-www-form-urlencoded",
       },
-      body: encodeParams(params),
+      body,
     });
   };
 
@@ -86,11 +97,18 @@ export async function linnworksRequest<T = unknown>(
   let res = await send(session);
 
   if (res.statusCode === 401) {
+    if (env.LINNWORKS_DEBUG) console.log("[linnworks] 401, re-authing");
     session = await getSession(true);
     res = await send(session);
   }
 
   const text = await res.body.text();
+
+  if (env.LINNWORKS_DEBUG) {
+    const truncated = text.length > 4000 ? `${text.slice(0, 4000)}…(+${text.length - 4000} chars)` : text;
+    console.log(`[linnworks] ← ${res.statusCode} ${truncated}`);
+  }
+
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw new Error(`Linnworks ${path} failed (${res.statusCode}): ${text}`);
   }

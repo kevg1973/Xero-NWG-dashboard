@@ -1,39 +1,63 @@
 import { useState } from "react";
 import { supabase } from "../lib/supabase";
-import type { PurchaseOrder } from "../lib/types";
+import {
+  PAYMENT_TERMS_LABEL,
+  type PaymentTerms,
+  type PurchaseOrder,
+} from "../lib/types";
 
 type EditableFields = {
-  payment_terms: string;
+  payment_terms: PaymentTerms;
+  payment_amount: string;
+  payment_date: string;
   deposit_amount: string;
   deposit_date: string;
   balance_amount: string;
   balance_date: string;
-  actual_delivery_date: string;
   notes: string;
 };
 
 function toForm(po: PurchaseOrder): EditableFields {
   return {
-    payment_terms: po.payment_terms ?? "",
+    payment_terms: po.payment_terms ?? "upfront",
+    payment_amount: po.payment_amount?.toString() ?? "",
+    payment_date: po.payment_date ?? "",
     deposit_amount: po.deposit_amount?.toString() ?? "",
     deposit_date: po.deposit_date ?? "",
     balance_amount: po.balance_amount?.toString() ?? "",
     balance_date: po.balance_date ?? "",
-    actual_delivery_date: po.actual_delivery_date ?? "",
     notes: po.notes ?? "",
   };
+}
+
+/**
+ * For "paid in full" patterns, prefill the relevant amount with po_value_gbp
+ * (still editable in case the actual paid amount differs slightly). Only
+ * applied when the field is empty so we never overwrite user input.
+ */
+function withAutofill(form: EditableFields, po: PurchaseOrder): EditableFields {
+  const gbp = po.po_value_gbp?.toString() ?? "";
+  if (!gbp) return form;
+  if (form.payment_terms === "upfront" && !form.payment_amount) {
+    return { ...form, payment_amount: gbp };
+  }
+  if (form.payment_terms === "on_ship" && !form.balance_amount) {
+    return { ...form, balance_amount: gbp };
+  }
+  return form;
 }
 
 function toDb(f: EditableFields) {
   const num = (v: string) => (v.trim() === "" ? null : Number(v));
   const str = (v: string) => (v.trim() === "" ? null : v);
   return {
-    payment_terms: str(f.payment_terms),
+    payment_terms: f.payment_terms,
+    payment_amount: num(f.payment_amount),
+    payment_date: str(f.payment_date),
     deposit_amount: num(f.deposit_amount),
     deposit_date: str(f.deposit_date),
     balance_amount: num(f.balance_amount),
     balance_date: str(f.balance_date),
-    actual_delivery_date: str(f.actual_delivery_date),
     notes: str(f.notes),
   };
 }
@@ -47,12 +71,16 @@ export function POEditPanel({
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [form, setForm] = useState<EditableFields>(toForm(po));
+  const [form, setForm] = useState<EditableFields>(() => withAutofill(toForm(po), po));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  function update<K extends keyof EditableFields>(k: K, v: string) {
+  function update<K extends keyof EditableFields>(k: K, v: EditableFields[K]) {
     setForm((prev) => ({ ...prev, [k]: v }));
+  }
+
+  function changeTerms(next: PaymentTerms) {
+    setForm((prev) => withAutofill({ ...prev, payment_terms: next }, po));
   }
 
   async function save() {
@@ -71,80 +99,120 @@ export function POEditPanel({
     <div className="fixed inset-0 bg-ink-900/40 grid place-items-center px-4 z-50">
       <div className="bg-white rounded-lg max-w-lg w-full p-6 space-y-5">
         <div>
-          <h2 className="text-base font-semibold">{po.supplier_name ?? "Purchase order"}</h2>
+          <h2 className="text-base font-semibold">{po.supplier_name ?? po.po_number ?? "Purchase order"}</h2>
           <p className="text-xs text-ink-500 mt-0.5">
             {po.po_number ?? po.linnworks_po_id}
+            {po.delivery_date && (
+              <span className="ml-2 text-sky-700">· delivered {po.delivery_date}</span>
+            )}
           </p>
         </div>
 
-        <div className="grid grid-cols-2 gap-4">
-          <Field label="Payment terms">
-            <input
-              type="text"
-              placeholder="e.g. 50% deposit, 50% on shipping"
-              value={form.payment_terms}
-              onChange={(e) => update("payment_terms", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm col-span-2"
-            />
-          </Field>
+        <Field label="Payment terms">
+          <select
+            value={form.payment_terms}
+            onChange={(e) => changeTerms(e.target.value as PaymentTerms)}
+            className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm bg-white"
+          >
+            {(Object.keys(PAYMENT_TERMS_LABEL) as PaymentTerms[]).map((key) => (
+              <option key={key} value={key}>
+                {PAYMENT_TERMS_LABEL[key]}
+              </option>
+            ))}
+          </select>
+        </Field>
 
-          <Field label="Deposit amount (GBP)">
-            <input
-              type="number"
-              step="0.01"
-              value={form.deposit_amount}
-              onChange={(e) => update("deposit_amount", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
-            />
-          </Field>
-          <Field label="Deposit date">
-            <input
-              type="date"
-              value={form.deposit_date}
-              onChange={(e) => update("deposit_date", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
-            />
-          </Field>
+        {form.payment_terms === "upfront" && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Payment amount (GBP)">
+              <input
+                type="number"
+                step="0.01"
+                value={form.payment_amount}
+                onChange={(e) => update("payment_amount", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Payment date">
+              <input
+                type="date"
+                value={form.payment_date}
+                onChange={(e) => update("payment_date", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+          </div>
+        )}
 
-          <Field label="Balance amount (GBP)">
-            <input
-              type="number"
-              step="0.01"
-              value={form.balance_amount}
-              onChange={(e) => update("balance_amount", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
-            />
-          </Field>
-          <Field label="Balance date">
-            <input
-              type="date"
-              value={form.balance_date}
-              onChange={(e) => update("balance_date", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
-            />
-          </Field>
+        {form.payment_terms === "deposit_balance" && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Deposit amount (GBP)">
+              <input
+                type="number"
+                step="0.01"
+                value={form.deposit_amount}
+                onChange={(e) => update("deposit_amount", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Deposit date">
+              <input
+                type="date"
+                value={form.deposit_date}
+                onChange={(e) => update("deposit_date", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Balance amount (GBP)">
+              <input
+                type="number"
+                step="0.01"
+                value={form.balance_amount}
+                onChange={(e) => update("balance_amount", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Balance date">
+              <input
+                type="date"
+                value={form.balance_date}
+                onChange={(e) => update("balance_date", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+          </div>
+        )}
 
-          <Field label="Actual delivery date">
-            <input
-              type="date"
-              value={form.actual_delivery_date}
-              onChange={(e) => update("actual_delivery_date", e.target.value)}
-              className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm col-span-2"
-            />
-          </Field>
-        </div>
+        {form.payment_terms === "on_ship" && (
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Balance amount (GBP)">
+              <input
+                type="number"
+                step="0.01"
+                value={form.balance_amount}
+                onChange={(e) => update("balance_amount", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+            <Field label="Balance date">
+              <input
+                type="date"
+                value={form.balance_date}
+                onChange={(e) => update("balance_date", e.target.value)}
+                className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+              />
+            </Field>
+          </div>
+        )}
 
-        <div>
-          <label className="block">
-            <span className="text-xs font-medium text-ink-700">Notes</span>
-            <textarea
-              rows={3}
-              value={form.notes}
-              onChange={(e) => update("notes", e.target.value)}
-              className="mt-1 w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
-            />
-          </label>
-        </div>
+        <Field label="Notes (free text — exceptions, comments)">
+          <textarea
+            rows={3}
+            value={form.notes}
+            onChange={(e) => update("notes", e.target.value)}
+            className="w-full border border-ink-300 rounded px-2 py-1.5 text-sm"
+          />
+        </Field>
 
         {error && (
           <div className="text-sm text-bad bg-red-50 border border-red-200 rounded px-3 py-2">

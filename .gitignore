@@ -13,6 +13,10 @@ build/
 .env.*.local
 !.env.example
 
+# Local secrets / credentials (never commit)
+Secrets.txt
+secrets.txt
+
 # Logs
 *.log
 npm-debug.log*

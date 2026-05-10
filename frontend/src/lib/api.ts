@@ -10,7 +10,9 @@ async function authHeader(): Promise<HeadersInit> {
 export type SyncResponse = {
   ok: boolean;
   fetched?: number;
-  upserted?: number;
+  inserts?: number;
+  updates?: number;
+  unchanged?: number;
   durationMs?: number;
   error?: string;
 };

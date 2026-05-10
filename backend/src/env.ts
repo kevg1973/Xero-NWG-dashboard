@@ -11,6 +11,10 @@ const schema = z.object({
   LINNWORKS_APPLICATION_ID: z.string().min(1),
   LINNWORKS_APPLICATION_SECRET: z.string().min(1),
   LINNWORKS_TOKEN: z.string().min(1),
+  LINNWORKS_DEBUG: z
+    .string()
+    .optional()
+    .transform((v) => v === "true" || v === "1"),
 
   ENABLE_CRON: z
     .string()

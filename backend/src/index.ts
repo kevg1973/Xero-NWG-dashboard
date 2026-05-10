@@ -16,6 +16,8 @@ app.get("/health", (_req, res) => {
 app.use("/api", syncRouter);
 
 app.listen(env.PORT, () => {
-  console.log(`[backend] listening on :${env.PORT} (${env.NODE_ENV})`);
+  console.log(
+    `[backend] listening on :${env.PORT} (${env.NODE_ENV}) — sync=v2(no-date-filter, diagnostics, line-counts)`,
+  );
   startCron();
 });

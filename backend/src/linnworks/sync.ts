@@ -3,6 +3,7 @@ import { searchAllPurchaseOrders, type LinnworksPOHeader } from "./purchaseOrder
 
 type PORow = {
   linnworks_po_id: string;
+  linnworks_supplier_id: string | null;
   po_number: string | null;
   supplier_name: string | null;
   po_date: string | null;
@@ -10,9 +11,26 @@ type PORow = {
   po_value_original: number | null;
   po_value_gbp: number | null;
   expected_delivery_date: string | null;
+  delivery_date: string | null;
   linnworks_status: string | null;
+  line_count: number | null;
+  delivered_lines_count: number | null;
   last_synced_at: string;
 };
+
+const COMPARE_KEYS: Array<keyof PORow> = [
+  "po_number",
+  "po_date",
+  "currency",
+  "po_value_original",
+  "po_value_gbp",
+  "expected_delivery_date",
+  "delivery_date",
+  "linnworks_status",
+  "linnworks_supplier_id",
+  "line_count",
+  "delivered_lines_count",
+];
 
 function toDateOnly(value: unknown): string | null {
   if (!value || typeof value !== "string") return null;
@@ -30,81 +48,105 @@ function num(value: unknown): number | null {
 }
 
 function mapHeader(h: LinnworksPOHeader, syncedAt: string): PORow {
-  const totalCost = num(h.TotalCost);
-  const conversion = num(h.ConversionRate);
-  const currency = (h.Currency ?? "").toUpperCase() || null;
-
-  /**
-   * Linnworks PO totals appear to be in supplier currency. ConversionRate (when
-   * present) is supplier→GBP. If currency is GBP, original == GBP.
-   * If we have a rate, derive GBP. Otherwise leave po_value_gbp null and let
-   * the dashboard either show "-" or fall back to original. Revisit FX strategy
-   * in Phase 2 once we have real data to inspect.
-   */
-  let valueGbp: number | null = null;
-  if (totalCost !== null) {
-    if (currency === "GBP" || currency === null) valueGbp = totalCost;
-    else if (conversion !== null && conversion > 0) valueGbp = totalCost / conversion;
-  }
-
   return {
-    linnworks_po_id: h.pkPurchaseId,
-    po_number: (h.ExternalInvoiceNumber as string | null) ?? null,
-    supplier_name: (h.Supplier as string | null) ?? null,
+    linnworks_po_id: h.pkPurchaseID,
+    linnworks_supplier_id: h.fkSupplierId ?? null,
+    po_number: h.ExternalInvoiceNumber ?? null,
+    supplier_name: null, // resolved in Phase 2 via supplier-name lookup
     po_date: toDateOnly(h.DateOfPurchase),
-    currency,
-    po_value_original: totalCost,
-    po_value_gbp: valueGbp,
-    expected_delivery_date: toDateOnly(h.QuotedDeliveryDate ?? h.DateOfDelivery),
-    linnworks_status: (h.Status as string | null) ?? null,
+    currency: (h.Currency ?? "").toUpperCase() || null,
+    po_value_original: num(h.TotalCost),
+    po_value_gbp: num(h.ConvertedGrandTotal),
+    expected_delivery_date: toDateOnly(h.QuotedDeliveryDate),
+    delivery_date: toDateOnly(h.DateOfDelivery),
+    linnworks_status: h.Status ?? null,
+    line_count: num(h.LineCount),
+    delivered_lines_count: num(h.DeliveredLinesCount),
     last_synced_at: syncedAt,
   };
 }
 
+function rowsDiffer(prev: Partial<PORow>, next: PORow): boolean {
+  return COMPARE_KEYS.some((k) => {
+    const a = prev[k];
+    const b = next[k];
+    if (a == null && b == null) return false;
+    if (a == null || b == null) return true;
+    return String(a) !== String(b);
+  });
+}
+
 export type SyncSummary = {
   fetched: number;
-  upserted: number;
-  fromDate: string;
-  toDate: string;
+  inserts: number;
+  updates: number;
+  unchanged: number;
   durationMs: number;
 };
 
 export type SyncMode = "incremental" | "full";
 
-export async function syncPurchaseOrders(mode: SyncMode = "incremental"): Promise<SyncSummary> {
+/**
+ * Fetch all POs (no DateFrom filter) every sync. With Kevin's volume (~340 POs)
+ * paging through all of them is cheap, and a date filter would silently drop
+ * older POs whose Linnworks fields (status, delivery date, value) have just
+ * changed. Both modes currently do the same thing — we keep them as separate
+ * functions to allow future divergence (e.g., if volume forces incremental to
+ * narrow scope).
+ */
+export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promise<SyncSummary> {
   const startedAt = Date.now();
-  const now = new Date();
-  const from = new Date(now);
-  if (mode === "incremental") {
-    from.setHours(from.getHours() - 36);
-  } else {
-    from.setFullYear(from.getFullYear() - 2);
-  }
 
-  const headers = await searchAllPurchaseOrders({ fromDate: from, toDate: now });
+  const headers = await searchAllPurchaseOrders({});
   const syncedAt = new Date().toISOString();
   const rows = headers.map((h) => mapHeader(h, syncedAt));
 
+  if (!rows.length) {
+    return { fetched: 0, inserts: 0, updates: 0, unchanged: 0, durationMs: Date.now() - startedAt };
+  }
+
+  /**
+   * Diagnostic: count inserts vs updates vs unchanged. Done by reading the
+   * existing Linnworks-owned columns for matching IDs and comparing field by
+   * field. Costs one extra select but it's cheap and worth it for visibility.
+   */
+  const ids = rows.map((r) => r.linnworks_po_id);
+  const { data: existing, error: selError } = await supabase
+    .from("purchase_orders")
+    .select(
+      "linnworks_po_id, po_number, po_date, currency, po_value_original, po_value_gbp, expected_delivery_date, delivery_date, linnworks_status, linnworks_supplier_id, line_count, delivered_lines_count",
+    )
+    .in("linnworks_po_id", ids);
+  if (selError) throw new Error(`pre-upsert select failed: ${selError.message}`);
+
+  const existingMap = new Map((existing ?? []).map((r) => [r.linnworks_po_id, r]));
+
+  let inserts = 0;
+  let updates = 0;
+  let unchanged = 0;
+  for (const row of rows) {
+    const prev = existingMap.get(row.linnworks_po_id);
+    if (!prev) inserts++;
+    else if (rowsDiffer(prev as Partial<PORow>, row)) updates++;
+    else unchanged++;
+  }
+
   /**
    * Idempotency: only update Linnworks-owned columns. User-edit columns
-   * (payment_terms, deposit_*, balance_*, actual_delivery_date, notes) are
-   * NEVER touched by sync. We achieve this by listing only Linnworks columns
-   * in the upsert payload — Postgres leaves untouched columns alone.
+   * (payment_*, deposit_*, balance_*, notes) are NEVER touched by sync. We
+   * achieve this by listing only Linnworks columns in the upsert payload —
+   * Postgres leaves untouched columns alone on UPDATE.
    */
-  let upserted = 0;
-  if (rows.length) {
-    const { error, count } = await supabase
-      .from("purchase_orders")
-      .upsert(rows, { onConflict: "linnworks_po_id", count: "exact" });
-    if (error) throw new Error(`purchase_orders upsert failed: ${error.message}`);
-    upserted = count ?? rows.length;
-  }
+  const { error } = await supabase
+    .from("purchase_orders")
+    .upsert(rows, { onConflict: "linnworks_po_id", ignoreDuplicates: false });
+  if (error) throw new Error(`purchase_orders upsert failed: ${error.message}`);
 
   return {
     fetched: headers.length,
-    upserted,
-    fromDate: from.toISOString(),
-    toDate: now.toISOString(),
+    inserts,
+    updates,
+    unchanged,
     durationMs: Date.now() - startedAt,
   };
 }
