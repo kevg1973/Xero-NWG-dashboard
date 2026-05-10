@@ -1,25 +1,39 @@
 import { useMemo, useState } from "react";
 import {
   derivePOStatus,
-  STATUS_LABEL,
+  deliveryStatus,
+  paymentStatus,
+  statusLabel,
   STATUS_ORDER,
   type PurchaseOrder,
 } from "../lib/types";
 import { POEditPanel } from "./POEditPanel";
 
-type StatusFilter = "active" | "delivered" | "all";
+type PaymentFilter = "any" | "awaiting" | "deposit_paid" | "paid_in_full";
+type DeliveryFilter = "any" | "awaiting" | "partial" | "delivered";
 
-const FILTER_LABEL: Record<StatusFilter, string> = {
-  active: "Active (open / pending / partial)",
-  delivered: "Delivered",
-  all: "All",
+const PAYMENT_FILTER_LABEL: Record<PaymentFilter, string> = {
+  any: "Any",
+  awaiting: "Awaiting payment",
+  deposit_paid: "Deposit paid",
+  paid_in_full: "Paid in full",
 };
 
-function matchesFilter(po: PurchaseOrder, filter: StatusFilter): boolean {
-  const s = (po.linnworks_status ?? "").toUpperCase();
-  if (filter === "all") return true;
-  if (filter === "delivered") return s === "DELIVERED";
-  return s !== "DELIVERED";
+const DELIVERY_FILTER_LABEL: Record<DeliveryFilter, string> = {
+  any: "Any",
+  awaiting: "Awaiting delivery",
+  partial: "Partially delivered",
+  delivered: "Delivered",
+};
+
+function matchesFilters(
+  po: PurchaseOrder,
+  pmt: PaymentFilter,
+  dlv: DeliveryFilter,
+): boolean {
+  if (pmt !== "any" && paymentStatus(po) !== pmt) return false;
+  if (dlv !== "any" && deliveryStatus(po) !== dlv) return false;
+  return true;
 }
 
 function fmtGbp(value: number | null): string {
@@ -59,6 +73,7 @@ const STATUS_BADGE: Record<ReturnType<typeof derivePOStatus>, string> = {
   awaiting_balance: "bg-ink-100 text-ink-700",
   deposit_paid: "bg-amber-100 text-amber-800",
   paid_in_full: "bg-emerald-100 text-emerald-800",
+  partial_delivery: "bg-orange-100 text-orange-800",
   delivered: "bg-sky-100 text-sky-800",
   closed: "bg-ink-100 text-ink-500",
 };
@@ -71,11 +86,12 @@ export function POsTable({
   onChange: () => void;
 }) {
   const [editing, setEditing] = useState<PurchaseOrder | null>(null);
-  const [filter, setFilter] = useState<StatusFilter>("active");
+  const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("any");
+  const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>("any");
 
   const visible = useMemo(() => {
     return rows
-      .filter((po) => matchesFilter(po, filter))
+      .filter((po) => matchesFilters(po, paymentFilter, deliveryFilter))
       .sort((a, b) => {
         const sa = STATUS_ORDER[derivePOStatus(a)];
         const sb = STATUS_ORDER[derivePOStatus(b)];
@@ -84,7 +100,7 @@ export function POsTable({
         const db = b.po_date ?? "";
         return db.localeCompare(da);
       });
-  }, [rows, filter]);
+  }, [rows, paymentFilter, deliveryFilter]);
 
   if (!rows.length) {
     return (
@@ -101,20 +117,36 @@ export function POsTable({
           <div className="text-sm text-ink-500">
             Showing <span className="text-ink-900 font-medium">{visible.length}</span> of {rows.length} POs
           </div>
-          <label className="flex items-center gap-2 text-sm">
-            <span className="text-ink-500">Status</span>
-            <select
-              value={filter}
-              onChange={(e) => setFilter(e.target.value as StatusFilter)}
-              className="border border-ink-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-700"
-            >
-              {(Object.keys(FILTER_LABEL) as StatusFilter[]).map((key) => (
-                <option key={key} value={key}>
-                  {FILTER_LABEL[key]}
-                </option>
-              ))}
-            </select>
-          </label>
+          <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-ink-500">Payment</span>
+              <select
+                value={paymentFilter}
+                onChange={(e) => setPaymentFilter(e.target.value as PaymentFilter)}
+                className="border border-ink-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-700"
+              >
+                {(Object.keys(PAYMENT_FILTER_LABEL) as PaymentFilter[]).map((key) => (
+                  <option key={key} value={key}>
+                    {PAYMENT_FILTER_LABEL[key]}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-ink-500">Delivery</span>
+              <select
+                value={deliveryFilter}
+                onChange={(e) => setDeliveryFilter(e.target.value as DeliveryFilter)}
+                className="border border-ink-300 rounded px-2 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-ink-700"
+              >
+                {(Object.keys(DELIVERY_FILTER_LABEL) as DeliveryFilter[]).map((key) => (
+                  <option key={key} value={key}>
+                    {DELIVERY_FILTER_LABEL[key]}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
         <table className="w-full text-sm">
           <thead className="bg-ink-100 text-ink-500 text-xs uppercase tracking-wide">
@@ -163,7 +195,7 @@ export function POsTable({
                   </td>
                   <td className="px-4 py-3 text-ink-700 tabular-nums">{paidLabel(po)}</td>
                   <td className="px-4 py-3 text-ink-700">
-                    {po.delivery_date ? (
+                    {po.linnworks_status === "DELIVERED" && po.delivery_date ? (
                       <span>
                         {fmtDate(po.delivery_date)}
                         <span className="text-xs text-ink-500 ml-1">delivered</span>
@@ -176,7 +208,7 @@ export function POsTable({
                     <span
                       className={`inline-flex items-center text-xs font-medium px-2 py-0.5 rounded ${STATUS_BADGE[status]}`}
                     >
-                      {STATUS_LABEL[status]}
+                      {statusLabel(po)}
                     </span>
                   </td>
                   <td className="px-4 py-3 text-right">

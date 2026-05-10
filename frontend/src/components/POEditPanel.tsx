@@ -102,7 +102,7 @@ export function POEditPanel({
           <h2 className="text-base font-semibold">{po.supplier_name ?? po.po_number ?? "Purchase order"}</h2>
           <p className="text-xs text-ink-500 mt-0.5">
             {po.po_number ?? po.linnworks_po_id}
-            {po.delivery_date && (
+            {po.linnworks_status === "DELIVERED" && po.delivery_date && (
               <span className="ml-2 text-sky-700">· delivered {po.delivery_date}</span>
             )}
           </p>

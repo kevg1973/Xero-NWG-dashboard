@@ -41,25 +41,58 @@ export type DerivedStatus =
   | "awaiting_balance"
   | "deposit_paid"
   | "paid_in_full"
+  | "partial_delivery"
   | "delivered"
   | "closed";
 
-export function derivePOStatus(po: PurchaseOrder): DerivedStatus {
-  if (po.delivery_date) return "delivered";
+/**
+ * Two orthogonal axes — payment progress and delivery progress — so the table
+ * can filter each independently. derivePOStatus composes them into a single
+ * label for the badge.
+ *
+ * `linnworks_status` is the only authoritative delivery signal. `delivery_date`
+ * cannot be used: Linnworks initialises DateOfDelivery to the PO date when a
+ * PO is created, so it is non-null for OPEN/PARTIAL POs too.
+ */
+export type PaymentStatus = "awaiting" | "deposit_paid" | "paid_in_full";
+export type DeliveryStatus = "awaiting" | "partial" | "delivered";
 
+export function paymentStatus(po: PurchaseOrder): PaymentStatus {
   const terms = po.payment_terms ?? "upfront";
-
   if (terms === "upfront") {
-    return po.payment_amount ? "paid_in_full" : "awaiting_payment";
+    return po.payment_amount ? "paid_in_full" : "awaiting";
   }
   if (terms === "deposit_balance") {
     if (po.deposit_amount && po.balance_amount) return "paid_in_full";
     if (po.deposit_amount) return "deposit_paid";
-    return "awaiting_deposit";
+    return "awaiting";
   }
   if (terms === "on_ship") {
-    return po.balance_amount ? "paid_in_full" : "awaiting_balance";
+    return po.balance_amount ? "paid_in_full" : "awaiting";
   }
+  return "awaiting";
+}
+
+export function deliveryStatus(po: PurchaseOrder): DeliveryStatus {
+  const lws = (po.linnworks_status ?? "").toUpperCase();
+  if (lws === "DELIVERED") return "delivered";
+  if (lws === "PARTIAL") return "partial";
+  return "awaiting";
+}
+
+export function derivePOStatus(po: PurchaseOrder): DerivedStatus {
+  const dlv = deliveryStatus(po);
+  if (dlv === "delivered") return "delivered";
+  if (dlv === "partial") return "partial_delivery";
+
+  const pmt = paymentStatus(po);
+  if (pmt === "paid_in_full") return "paid_in_full";
+  if (pmt === "deposit_paid") return "deposit_paid";
+
+  // Awaiting: pick the variant that names the missing payment for the badge.
+  const terms = po.payment_terms ?? "upfront";
+  if (terms === "deposit_balance") return "awaiting_deposit";
+  if (terms === "on_ship") return "awaiting_balance";
   return "awaiting_payment";
 }
 
@@ -69,8 +102,9 @@ export const STATUS_ORDER: Record<DerivedStatus, number> = {
   awaiting_balance: 0,
   deposit_paid: 1,
   paid_in_full: 2,
-  delivered: 3,
-  closed: 4,
+  partial_delivery: 3,
+  delivered: 4,
+  closed: 5,
 };
 
 export const STATUS_LABEL: Record<DerivedStatus, string> = {
@@ -79,6 +113,15 @@ export const STATUS_LABEL: Record<DerivedStatus, string> = {
   awaiting_balance: "Awaiting balance",
   deposit_paid: "Deposit paid",
   paid_in_full: "Paid in full",
+  partial_delivery: "Partial",
   delivered: "Delivered",
   closed: "Closed",
 };
+
+export function statusLabel(po: PurchaseOrder): string {
+  const status = derivePOStatus(po);
+  if (status === "partial_delivery" && po.line_count && po.delivered_lines_count != null) {
+    return `Partial (${po.delivered_lines_count}/${po.line_count})`;
+  }
+  return STATUS_LABEL[status];
+}

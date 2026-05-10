@@ -76,6 +76,23 @@ function rowsDiffer(prev: Partial<PORow>, next: PORow): boolean {
   });
 }
 
+/**
+ * Supabase JS errors are PostgrestError-shaped: { message, code, details, hint }.
+ * `message` is sometimes empty (e.g. when nginx returns 414/413 with no body),
+ * so always include the other fields if present.
+ */
+function formatPgError(e: unknown): string {
+  if (!e || typeof e !== "object") return String(e);
+  const err = e as { code?: string; message?: string; details?: string; hint?: string };
+  const parts = [
+    err.code ? `[${err.code}]` : null,
+    err.message || null,
+    err.details ? `details=${err.details}` : null,
+    err.hint ? `hint=${err.hint}` : null,
+  ].filter(Boolean);
+  return parts.length ? parts.join(" ") : "(no error body)";
+}
+
 export type SyncSummary = {
   fetched: number;
   inserts: number;
@@ -87,12 +104,12 @@ export type SyncSummary = {
 export type SyncMode = "incremental" | "full";
 
 /**
- * Fetch all POs (no DateFrom filter) every sync. With Kevin's volume (~340 POs)
- * paging through all of them is cheap, and a date filter would silently drop
- * older POs whose Linnworks fields (status, delivery date, value) have just
- * changed. Both modes currently do the same thing — we keep them as separate
- * functions to allow future divergence (e.g., if volume forces incremental to
- * narrow scope).
+ * Fetch all POs (no DateFrom filter) every sync. Linnworks holds ~3000 POs of
+ * history; paging at 200/page is still seconds, and a date filter would
+ * silently drop older POs whose Linnworks fields (status, delivery date,
+ * value) have just changed. Both modes currently do the same thing — we keep
+ * them as separate functions to allow future divergence (e.g., if volume
+ * forces incremental to narrow scope).
  */
 export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promise<SyncSummary> {
   const startedAt = Date.now();
@@ -106,18 +123,22 @@ export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promi
   }
 
   /**
-   * Diagnostic: count inserts vs updates vs unchanged. Done by reading the
-   * existing Linnworks-owned columns for matching IDs and comparing field by
-   * field. Costs one extra select but it's cheap and worth it for visibility.
+   * Diagnostic: count inserts vs updates vs unchanged. Read all existing
+   * Linnworks-owned columns and look up incoming rows in a Map. We deliberately
+   * do NOT pass an .in() filter here — PostgREST puts that list in the URL,
+   * which fails with 414 once the row count grows past ~200 GUIDs (and 414s
+   * come back with no body, so the JS client surfaces an empty error message).
+   * The table is ~3000 rows × 12 thin columns; a full select is still cheap.
    */
-  const ids = rows.map((r) => r.linnworks_po_id);
   const { data: existing, error: selError } = await supabase
     .from("purchase_orders")
     .select(
       "linnworks_po_id, po_number, po_date, currency, po_value_original, po_value_gbp, expected_delivery_date, delivery_date, linnworks_status, linnworks_supplier_id, line_count, delivered_lines_count",
-    )
-    .in("linnworks_po_id", ids);
-  if (selError) throw new Error(`pre-upsert select failed: ${selError.message}`);
+    );
+  if (selError) {
+    console.error("[sync] pre-upsert select error:", selError);
+    throw new Error(`pre-upsert select failed: ${formatPgError(selError)}`);
+  }
 
   const existingMap = new Map((existing ?? []).map((r) => [r.linnworks_po_id, r]));
 
@@ -140,7 +161,10 @@ export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promi
   const { error } = await supabase
     .from("purchase_orders")
     .upsert(rows, { onConflict: "linnworks_po_id", ignoreDuplicates: false });
-  if (error) throw new Error(`purchase_orders upsert failed: ${error.message}`);
+  if (error) {
+    console.error("[sync] purchase_orders upsert error:", error);
+    throw new Error(`purchase_orders upsert failed: ${formatPgError(error)}`);
+  }
 
   return {
     fetched: headers.length,
