@@ -6,7 +6,12 @@ import { startCron } from "./cron.js";
 
 const app = express();
 
-app.use(cors());
+const ALLOWED_ORIGINS = [
+  "https://xero-nwg-dashboard.pages.dev",
+  "http://localhost:5173",
+];
+
+app.use(cors({ origin: ALLOWED_ORIGINS }));
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
