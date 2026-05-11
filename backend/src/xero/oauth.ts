@@ -8,9 +8,6 @@ const TOKEN_URL = "https://identity.xero.com/connect/token";
 const CONNECTIONS_URL = "https://api.xero.com/connections";
 
 const SCOPES = [
-  "openid",
-  "profile",
-  "email",
   "accounting.reports.read",
   "accounting.transactions.read",
   "accounting.contacts.read",
