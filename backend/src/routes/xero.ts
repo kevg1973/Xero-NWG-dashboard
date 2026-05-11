@@ -14,6 +14,9 @@ export const xeroRouter = Router();
  */
 xeroRouter.get("/connect", (_req, res) => {
   const { url } = buildAuthUrl();
+  // stderr (unbuffered) + direct write so Railway can't filter or buffer it.
+  process.stderr.write(`[xero/connect] redirecting to: ${url}\n`);
+  console.error("[xero/connect] redirecting to:", url);
   res.redirect(url);
 });
 
