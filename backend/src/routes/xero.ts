@@ -14,6 +14,7 @@ export const xeroRouter = Router();
  */
 xeroRouter.get("/connect", (_req, res) => {
   const { url } = buildAuthUrl();
+  console.log("[xero/connect] redirecting to:", url);
   res.redirect(url);
 });
 
