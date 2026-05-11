@@ -29,6 +29,8 @@ xeroRouter.get("/callback", async (req, res) => {
   const code = typeof req.query.code === "string" ? req.query.code : null;
   const state = typeof req.query.state === "string" ? req.query.state : null;
   const errorParam = typeof req.query.error === "string" ? req.query.error : null;
+  const errorDescription =
+    typeof req.query.error_description === "string" ? req.query.error_description : null;
 
   const bounceTo = (params: Record<string, string>) => {
     const qs = new URLSearchParams(params).toString();
@@ -36,6 +38,12 @@ xeroRouter.get("/callback", async (req, res) => {
   };
 
   if (errorParam) {
+    // Log Xero's rejection reason. error_description usually names the
+    // offending scope or parameter, which is the diagnostic we want.
+    process.stderr.write(
+      `[xero/callback] rejected: error=${errorParam} error_description=${errorDescription ?? ""}\n`,
+    );
+    console.error("[xero/callback] rejected:", { error: errorParam, error_description: errorDescription });
     return bounceTo({ xero: "error", reason: errorParam });
   }
   if (!code || !state) {

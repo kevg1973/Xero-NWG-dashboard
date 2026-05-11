@@ -10,13 +10,17 @@ const CONNECTIONS_URL = "https://api.xero.com/connections";
 // Xero is OIDC-based; `offline_access` requires `openid` in the same request.
 // `profile`/`email` round out the OIDC set so the consent screen shows who
 // the user is connecting as.
+//
+// This app was registered after Xero's 2026-03-02 granular-scopes cutoff,
+// so the legacy broad scopes (accounting.reports.read,
+// accounting.transactions.read) are unavailable. We only need P&L and
+// balance sheet reports — the two granular report scopes below cover it.
 const SCOPES = [
   "openid",
   "profile",
   "email",
-  "accounting.reports.read",
-  "accounting.transactions.read",
-  "accounting.contacts.read",
+  "accounting.reports.profitandloss.read",
+  "accounting.reports.balancesheet.read",
   "offline_access",
 ];
 
