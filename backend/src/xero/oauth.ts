@@ -21,6 +21,7 @@ const SCOPES = [
   "email",
   "accounting.reports.profitandloss.read",
   "accounting.reports.balancesheet.read",
+  "accounting.reports.banksummary.read",
   "offline_access",
 ];
 

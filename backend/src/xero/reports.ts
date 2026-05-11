@@ -110,28 +110,35 @@ export async function fetchProfitAndLoss(fromDate: Date, toDate: Date): Promise<
 
 export type BalanceSheetResult = {
   raw: XeroReportEnvelope;
-  cash_total: number | null;
   trade_receivables: number | null;
   trade_payables: number | null;
 };
 
 /**
- * Balance sheet parsing is fuzzier than P&L:
- *  - "Total Bank" or sum of all rows under the "Bank" section → cash_total.
- *    Includes whatever bank/PayPal/Stripe accounts Xero has classified as Bank.
- *  - "Accounts Receivable" / "Trade Debtors" / "Total Current Assets" subrow → trade_receivables.
- *  - "Accounts Payable" / "Trade Creditors" → trade_payables.
+ * Xero's BalanceSheet API silently rounds the requested `date` to the end of
+ * the period (default: month-end). There is no parameter combination that
+ * makes it honour a mid-month date — it's a known multi-year API limitation
+ * (open Xero UserVoice item).
+ *
+ * In practice, within the current month Xero seems to use today's posted
+ * balances and just label them with the upcoming month-end — verified by
+ * comparing AR figures between this endpoint and other day-accurate Xero
+ * tools. So daily AR/AP snapshots still update day-to-day; only the "as at"
+ * label drifts. We log the label here so any future change in this behaviour
+ * is visible in production logs.
+ *
+ * For cash_total we use the dedicated BankSummary report instead (see
+ * fetchBankSummary) — that endpoint does honour arbitrary dates and avoids
+ * the month-boundary discontinuity.
  */
 export async function fetchBalanceSheet(asOf: Date): Promise<BalanceSheetResult> {
+  const requestedDate = isoDate(asOf);
   const raw = await xeroGet<XeroReportEnvelope<XeroReport>>("/Reports/BalanceSheet", {
-    date: isoDate(asOf),
+    date: requestedDate,
   });
+  logReportDateMismatch("BalanceSheet", requestedDate, raw);
   const report = raw.Reports?.[0];
   const rows = report?.Rows ?? [];
-
-  const cash_total =
-    findAmountByLabel(rows, [/^Total Bank$/i]) ??
-    sumBankSection(rows);
 
   const trade_receivables = findAmountByLabel(rows, [
     /^Accounts Receivable$/i,
@@ -145,30 +152,92 @@ export async function fetchBalanceSheet(asOf: Date): Promise<BalanceSheetResult>
     /^Trade Payables$/i,
   ]);
 
-  return { raw, cash_total, trade_receivables, trade_payables };
+  return { raw, trade_receivables, trade_payables };
+}
+
+export type BankSummaryResult = {
+  raw: XeroReportEnvelope;
+  cash_total: number | null;
+};
+
+/**
+ * BankSummary report: lists each bank account with opening/closing balances
+ * for a date range. Unlike BalanceSheet, this endpoint *does* honour arbitrary
+ * dates — passing fromDate=toDate=asOf gives us a one-day window and the
+ * closing balance per account.
+ *
+ * Cells per row: [account name, opening, deposits, withdrawals, closing].
+ * We trust the "Total" SummaryRow's last cell (closing total) when present;
+ * fall back to summing the last cell of every Row.
+ */
+export async function fetchBankSummary(asOf: Date): Promise<BankSummaryResult> {
+  const requestedDate = isoDate(asOf);
+  const raw = await xeroGet<XeroReportEnvelope<XeroReport>>("/Reports/BankSummary", {
+    fromDate: requestedDate,
+    toDate: requestedDate,
+  });
+  logReportDateMismatch("BankSummary", requestedDate, raw);
+  const report = raw.Reports?.[0];
+  const rows = report?.Rows ?? [];
+  const cash_total =
+    findClosingBalanceTotal(rows) ??
+    sumClosingBalances(rows);
+
+  return { raw, cash_total };
 }
 
 /**
- * Fallback when there's no explicit "Total Bank" summary row: walk top-level
- * sections, find the one titled "Bank", and sum its Row entries' amounts.
+ * Look for a SummaryRow labelled "Total"; closing balance is the last cell.
  */
-function sumBankSection(rows: XeroRow[]): number | null {
-  for (const section of rows) {
-    if (section.RowType !== "Section") continue;
-    const title = section.Title ?? "";
-    if (!/^Bank$/i.test(title)) continue;
-    let total = 0;
-    let found = false;
-    for (const r of section.Rows ?? []) {
-      if (r.RowType === "Row") {
-        const v = parseAmount(r.Cells?.[1]);
-        if (v != null) {
-          total += v;
-          found = true;
-        }
-      }
-    }
-    return found ? total : null;
+function findClosingBalanceTotal(rows: XeroRow[]): number | null {
+  const flat = flatten(rows);
+  for (const row of flat) {
+    if (row.RowType !== "SummaryRow") continue;
+    const label = row.Cells?.[0]?.Value ?? "";
+    if (!/^Total$/i.test(label)) continue;
+    const last = row.Cells?.[row.Cells.length - 1];
+    return parseAmount(last);
   }
   return null;
 }
+
+/**
+ * Fallback: sum the closing-balance cell (last cell) of every Row.
+ */
+function sumClosingBalances(rows: XeroRow[]): number | null {
+  const flat = flatten(rows);
+  let total = 0;
+  let found = false;
+  for (const row of flat) {
+    if (row.RowType !== "Row") continue;
+    const last = row.Cells?.[row.Cells.length - 1];
+    const v = parseAmount(last);
+    if (v != null) {
+      total += v;
+      found = true;
+    }
+  }
+  return found ? total : null;
+}
+
+/**
+ * Logs a one-liner when Xero's reported "as at" / period title doesn't match
+ * what we requested. ReportTitles[2] is conventionally the period string
+ * (e.g. "As at 31 May 2026" or "From X To Y"). stderr so Railway can't buffer.
+ */
+function logReportDateMismatch(reportName: string, requestedDate: string, raw: XeroReportEnvelope): void {
+  const titles = (raw.Reports?.[0] as { ReportTitles?: string[] } | undefined)?.ReportTitles ?? [];
+  const period = titles[2] ?? "";
+  const matches = period.includes(requestedDate) ||
+    period.toLowerCase().includes(formatHumanDate(requestedDate).toLowerCase());
+  process.stderr.write(
+    `[xero/${reportName}] requested=${requestedDate} xero_period="${period}" honoured=${matches}\n`,
+  );
+}
+
+function formatHumanDate(iso: string): string {
+  const [y, m, d] = iso.split("-").map(Number);
+  const months = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+  return `${d} ${months[(m ?? 1) - 1]} ${y}`;
+}
+

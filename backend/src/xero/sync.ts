@@ -1,5 +1,5 @@
 import { supabase } from "../db/supabase.js";
-import { fetchProfitAndLoss, fetchBalanceSheet } from "./reports.js";
+import { fetchProfitAndLoss, fetchBalanceSheet, fetchBankSummary } from "./reports.js";
 
 export type XeroPeriodType = "mtd" | "trailing_90d" | "balance_sheet";
 
@@ -46,8 +46,12 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
   const mtdPnl = await fetchProfitAndLoss(mtdStart, today);
   // P&L trailing 90d
   const trailingPnl = await fetchProfitAndLoss(trailingStart, today);
-  // Balance sheet as of today
+  // Balance sheet provides AR/AP. Cash comes from BankSummary instead,
+  // because BalanceSheet rounds `date` to month-end while BankSummary honours
+  // arbitrary dates — important when comparing day-by-day snapshots across
+  // month boundaries.
   const balance = await fetchBalanceSheet(today);
+  const bankSummary = await fetchBankSummary(today);
 
   const rows = [
     {
@@ -87,10 +91,10 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       cogs: null,
       gross_profit: null,
       operating_expenses: null,
-      cash_total: balance.cash_total,
+      cash_total: bankSummary.cash_total,
       trade_receivables: balance.trade_receivables,
       trade_payables: balance.trade_payables,
-      raw_response: balance.raw,
+      raw_response: { balance_sheet: balance.raw, bank_summary: bankSummary.raw },
     },
   ];
 
