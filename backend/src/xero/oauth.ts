@@ -7,7 +7,13 @@ const AUTH_BASE = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
 const CONNECTIONS_URL = "https://api.xero.com/connections";
 
+// Xero is OIDC-based; `offline_access` requires `openid` in the same request.
+// `profile`/`email` round out the OIDC set so the consent screen shows who
+// the user is connecting as.
 const SCOPES = [
+  "openid",
+  "profile",
+  "email",
   "accounting.reports.read",
   "accounting.transactions.read",
   "accounting.contacts.read",
