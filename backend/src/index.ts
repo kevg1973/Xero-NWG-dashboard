@@ -2,6 +2,7 @@ import cors from "cors";
 import express from "express";
 import { env } from "./env.js";
 import { syncRouter } from "./routes/sync.js";
+import { xeroRouter } from "./routes/xero.js";
 import { startCron } from "./cron.js";
 
 const app = express();
@@ -20,6 +21,7 @@ app.get("/health", (_req, res) => {
 });
 
 app.use("/api", syncRouter);
+app.use("/api/xero", xeroRouter);
 
 app.listen(env.PORT, () => {
   console.log(

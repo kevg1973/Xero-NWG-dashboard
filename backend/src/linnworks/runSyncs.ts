@@ -1,6 +1,7 @@
 import { recordSync, type SyncSource } from "../db/syncLog.js";
 import { syncPurchaseOrders, type SyncMode, type SyncSummary } from "./sync.js";
 import { syncFinancialSnapshots, type FinancialSyncSummary } from "./financial.js";
+import { syncXeroSnapshots, type XeroSyncSummary } from "../xero/sync.js";
 
 /**
  * Orchestrates the full sync. Each step (PO + financial) runs in its own
@@ -50,6 +51,7 @@ export type FullSyncResult = {
   ok: boolean;
   po: StepResult<SyncSummary>;
   financial: StepResult<FinancialSyncSummary>;
+  xero: StepResult<XeroSyncSummary>;
 };
 
 export async function runSyncs({
@@ -61,5 +63,11 @@ export async function runSyncs({
 }): Promise<FullSyncResult> {
   const po = await runStep("linnworks_po", trigger, () => syncPurchaseOrders(mode), { mode });
   const financial = await runStep("linnworks_financial", trigger, () => syncFinancialSnapshots());
-  return { ok: po.error === null && financial.error === null, po, financial };
+  const xero = await runStep("xero", trigger, () => syncXeroSnapshots());
+  return {
+    ok: po.error === null && financial.error === null && xero.error === null,
+    po,
+    financial,
+    xero,
+  };
 }

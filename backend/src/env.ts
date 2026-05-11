@@ -22,6 +22,14 @@ const schema = z.object({
     .transform((v) => v === "true" || v === "1"),
   SYNC_CRON_EXPRESSION: z.string().default("0 17 * * *"),
   SYNC_CRON_TZ: z.string().default("Europe/London"),
+
+  XERO_CLIENT_ID: z.string().min(1),
+  XERO_CLIENT_SECRET: z.string().min(1),
+  XERO_REDIRECT_URI: z.string().url(),
+  // Base64-encoded 32-byte key for AES-256-GCM. Generate: openssl rand -base64 32
+  XERO_ENCRYPTION_KEY: z.string().min(1),
+  // Where /api/xero/callback redirects after a successful (or failed) auth.
+  XERO_FRONTEND_URL: z.string().url(),
 });
 
 const parsed = schema.safeParse(process.env);

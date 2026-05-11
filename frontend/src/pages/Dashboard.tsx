@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { triggerSync } from "../lib/api";
+import { triggerSync, getXeroStatus, xeroConnectUrl, type XeroStatus } from "../lib/api";
 import type { PurchaseOrder } from "../lib/types";
 import { POsTable } from "../components/POsTable";
 
@@ -22,6 +22,8 @@ export function Dashboard() {
   const [syncing, setSyncing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
+  const [xero, setXero] = useState<XeroStatus | null>(null);
+  const [xeroBanner, setXeroBanner] = useState<{ kind: "ok" | "error"; text: string } | null>(null);
 
   async function refresh() {
     const { data, error } = await supabase
@@ -44,6 +46,25 @@ export function Dashboard() {
 
   useEffect(() => {
     refresh();
+    getXeroStatus().then(setXero).catch(() => setXero(null));
+
+    // Surface the result of an OAuth round-trip if present in the URL.
+    const params = new URLSearchParams(window.location.search);
+    const xeroParam = params.get("xero");
+    if (xeroParam === "connected") {
+      const tenant = params.get("tenant");
+      setXeroBanner({
+        kind: "ok",
+        text: tenant ? `Connected to Xero: ${tenant}` : "Xero connected",
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    } else if (xeroParam === "error") {
+      setXeroBanner({
+        kind: "error",
+        text: `Xero connection failed: ${params.get("reason") ?? "unknown"}`,
+      });
+      window.history.replaceState({}, "", window.location.pathname);
+    }
   }, []);
 
   async function onSync() {
@@ -73,6 +94,7 @@ export function Dashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2">
+            <XeroIndicator status={xero} />
             <button
               onClick={onSync}
               disabled={syncing}
@@ -91,6 +113,17 @@ export function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+        {xeroBanner && (
+          <div
+            className={
+              xeroBanner.kind === "ok"
+                ? "text-sm text-emerald-800 bg-emerald-50 border border-emerald-200 rounded px-3 py-2"
+                : "text-sm text-bad bg-red-50 border border-red-200 rounded px-3 py-2"
+            }
+          >
+            {xeroBanner.text}
+          </div>
+        )}
         {syncError && (
           <div className="text-sm text-bad bg-red-50 border border-red-200 rounded px-3 py-2">
             {syncError}
@@ -104,5 +137,35 @@ export function Dashboard() {
         )}
       </main>
     </div>
+  );
+}
+
+function XeroIndicator({ status }: { status: XeroStatus | null }) {
+  if (status == null) return null;
+
+  if (!status.connected) {
+    return (
+      <a
+        href={xeroConnectUrl()}
+        className="text-sm font-medium text-ink-900 border border-ink-300 rounded px-3 py-1.5 hover:bg-ink-100"
+      >
+        Connect Xero
+      </a>
+    );
+  }
+  if (status.needs_reconnection) {
+    return (
+      <a
+        href={xeroConnectUrl()}
+        className="text-sm font-medium text-amber-800 border border-amber-300 bg-amber-50 rounded px-3 py-1.5 hover:bg-amber-100"
+      >
+        Reconnect Xero
+      </a>
+    );
+  }
+  return (
+    <span className="text-xs text-ink-500 px-2 py-1.5">
+      Xero · {status.tenant_name ?? "connected"}
+    </span>
   );
 }

@@ -18,8 +18,9 @@ syncRouter.post("/sync", requireAuth, async (req, res) => {
     ok: result.ok,
     ...(result.po.summary ?? {}),
     financial: result.financial.summary,
+    xero: result.xero.summary,
   };
-  const error = result.po.error ?? result.financial.error;
+  const error = result.po.error ?? result.financial.error ?? result.xero.error;
   if (error) body.error = error;
 
   res.status(result.ok ? 200 : 500).json(body);

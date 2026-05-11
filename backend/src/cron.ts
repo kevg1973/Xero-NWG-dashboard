@@ -21,6 +21,7 @@ export function startCron() {
       const result = await runSyncs({ trigger: "cron" });
       console.log("[cron] po:", result.po.error ? `FAIL ${result.po.error}` : result.po.summary);
       console.log("[cron] financial:", result.financial.error ? `FAIL ${result.financial.error}` : result.financial.summary);
+      console.log("[cron] xero:", result.xero.error ? `FAIL ${result.xero.error}` : result.xero.summary);
     },
     { timezone: env.SYNC_CRON_TZ },
   );

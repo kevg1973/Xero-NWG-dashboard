@@ -110,6 +110,11 @@ Secrets.txt        Local-only credential dump (gitignored, see .gitignore)
   SYNC_CRON_EXPRESSION=0 17 * * *
   SYNC_CRON_TZ=Europe/London
   LINNWORKS_DEBUG=false        # set true for verbose request/response logs
+  XERO_CLIENT_ID=...
+  XERO_CLIENT_SECRET=...
+  XERO_REDIRECT_URI=https://xero-nwg-dashboard-production.up.railway.app/api/xero/callback
+  XERO_ENCRYPTION_KEY=...       # base64 32-byte key. Generate: openssl rand -base64 32
+  XERO_FRONTEND_URL=https://dashboard.northwestguitars.co.uk
   ```
 - **Fallback plan**: If Railway ever stops the service to free resources, switch to a Railway Cron job that runs `npm run sync:once`.
 
@@ -177,8 +182,7 @@ Secrets.txt        Local-only credential dump (gitignored, see .gitignore)
 **Phase 2 — IN PROGRESS**:
 - ✅ Supplier name resolution (2026-05-11): `Inventory/GetSuppliers` endpoint returns the full UUID→name list as a plain JSON array. New `suppliers` table caches it; PO sync runs supplier sync first, then writes `supplier_name` onto each PO row at upsert time. Frontend reads the cached name, falls back to "Unknown supplier" for historical POs with deleted suppliers (~99 POs from 2012–2023).
 - ✅ Linnworks Financial Summary sync (2026-05-11): `Dashboards/GetFinancialSummary` endpoint pulled twice per sync — MTD (1st of month → today) and trailing 90d. New `linnworks_financial_snapshots` table keyed on `(snapshot_date, period_type)`. Scalar columns (sales/refunds/purchases/stock_*) come from the **GBP** currency entry — not the `Combined` rollup, which is polluted by Linnworks' "Unknown" currency bucket with garbage values (~9.9M in a 90d window for a £80k/quarter business). Full payload stored in `raw_response` jsonb. PO sync and financial sync run independently via `runSyncs()` orchestrator — failure of one does not stop the other; each writes its own `sync_log` entry.
-- Xero OAuth flow + refresh-token storage in Supabase
-- Xero P&L + balance sheet pull
+- ✅ Xero integration (2026-05-11): OAuth2 authorization-code flow. Routes: `GET /api/xero/connect` (redirects to Xero), `GET /api/xero/callback` (token exchange + redirect back to frontend), `GET /api/xero/status` (auth-protected, surfaces connected/needs_reconnection/tenant_name). Tokens stored in single-row `xero_auth` table; **refresh_token encrypted at rest with AES-256-GCM** (key from `XERO_ENCRYPTION_KEY` env var). Refresh tokens rotate on every use — `saveAuth()` always persists the new one before returning. Reconnection state inferred from the most recent xero `sync_log` row. Reports pulled per sync into `xero_snapshots` (mtd / trailing_90d / balance_sheet) with `raw_response` jsonb. Xero is the third independent step in `runSyncs()` — failure does not affect PO or financial sync. Defensive label-based parse for Xero's nested rows-of-rows report shape.
 - Snapshot tables for time-series (monthly aggregates)
 - 12-month backfill script
 
@@ -201,6 +205,7 @@ Secrets.txt        Local-only credential dump (gitignored, see .gitignore)
 5. `0005_add_line_counts.sql` — `line_count` + `delivered_lines_count` for partial-delivery display
 6. `0006_add_suppliers_table.sql` — `suppliers` cache table (linnworks_supplier_id PK, supplier_name, updated_at) + RLS
 7. `0007_add_financial_snapshots.sql` — `linnworks_financial_snapshots` table (snapshot_date, period_type, scalars + raw_response jsonb) unique on (snapshot_date, period_type) + RLS
+8. `0008_add_xero_tables.sql` — `xero_auth` (single-row id=1 check, encrypted refresh_token, tenant_id, no RLS policies = service-role-only) + `xero_snapshots` (mtd/trailing_90d/balance_sheet, scalars + raw_response, RLS authed read)
 
 **`purchase_orders`** — split ownership:
 

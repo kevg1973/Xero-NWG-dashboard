@@ -10,6 +10,7 @@ async function main() {
       ok: result.ok,
       po: result.po.summary ?? { error: result.po.error },
       financial: result.financial.summary ?? { error: result.financial.error },
+      xero: result.xero.summary ?? { error: result.xero.error },
     },
     null,
     2,
