@@ -79,6 +79,8 @@ function findAmountByLabel(rows: XeroRow[], patterns: RegExp[]): number | null {
 export type ProfitAndLossResult = {
   raw: XeroReportEnvelope;
   revenue: number | null;
+  cogs: number | null;
+  gross_profit: number | null;
   operating_expenses: number | null;
 };
 
@@ -92,10 +94,18 @@ export async function fetchProfitAndLoss(fromDate: Date, toDate: Date): Promise<
 
   // "Total Income" / "Total Revenue" — different Xero org configs use different labels.
   const revenue = findAmountByLabel(rows, [/^Total Income$/i, /^Total Revenue$/i, /^Total Operating Income$/i]);
+  // Xero's "Cost of Sales" section: Purchases, Direct Wages, etc. For NWG this
+  // is "Purchases + Direct Wages expensed in the period", not stock-shipped
+  // COGS — the accountant will reconcile via stock-on-hand journals later.
+  const cogs = findAmountByLabel(rows, [/^Total Cost of Sales$/i, /^Total Cost of Goods Sold$/i]);
+  // Trust Xero's own Gross Profit summary row rather than computing revenue-cogs —
+  // keeps the dashboard consistent with Xero even if the report adds rows we
+  // don't model (e.g. other income above gross profit).
+  const gross_profit = findAmountByLabel(rows, [/^Gross Profit$/i]);
   // "Total Operating Expenses" / "Total Expenses".
   const operating_expenses = findAmountByLabel(rows, [/^Total Operating Expenses$/i, /^Total Expenses$/i]);
 
-  return { raw, revenue, operating_expenses };
+  return { raw, revenue, cogs, gross_profit, operating_expenses };
 }
 
 export type BalanceSheetResult = {

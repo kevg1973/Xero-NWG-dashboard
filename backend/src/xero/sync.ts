@@ -9,6 +9,8 @@ export type XeroSyncSummary = {
     period_start: string | null;
     period_end: string;
     revenue: number | null;
+    cogs: number | null;
+    gross_profit: number | null;
     operating_expenses: number | null;
     cash_total: number | null;
     trade_receivables: number | null;
@@ -54,6 +56,8 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       period_start: isoDate(mtdStart),
       period_end: isoDate(today),
       revenue: mtdPnl.revenue,
+      cogs: mtdPnl.cogs,
+      gross_profit: mtdPnl.gross_profit,
       operating_expenses: mtdPnl.operating_expenses,
       cash_total: null as number | null,
       trade_receivables: null as number | null,
@@ -66,6 +70,8 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       period_start: isoDate(trailingStart),
       period_end: isoDate(today),
       revenue: trailingPnl.revenue,
+      cogs: trailingPnl.cogs,
+      gross_profit: trailingPnl.gross_profit,
       operating_expenses: trailingPnl.operating_expenses,
       cash_total: null,
       trade_receivables: null,
@@ -78,6 +84,8 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       period_start: null as string | null,
       period_end: isoDate(today),
       revenue: null,
+      cogs: null,
+      gross_profit: null,
       operating_expenses: null,
       cash_total: balance.cash_total,
       trade_receivables: balance.trade_receivables,
@@ -100,6 +108,8 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       period_start: r.period_start,
       period_end: r.period_end,
       revenue: r.revenue,
+      cogs: r.cogs,
+      gross_profit: r.gross_profit,
       operating_expenses: r.operating_expenses,
       cash_total: r.cash_total,
       trade_receivables: r.trade_receivables,

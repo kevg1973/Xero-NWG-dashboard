@@ -317,6 +317,8 @@ npm run typecheck
 - **Xero OAuth re-consent UI**: Not yet built. Phase 2.
 - **Multi-user**: RLS policies are currently `authenticated → all rows`. When adding more users, swap for `user_id`-scoped policies. The seed setup keeps this easy to migrate.
 - **Service token rotation**: Linnworks `Token` is the per-installation token. If it ever rotates we just update `LINNWORKS_TOKEN` on Railway.
+- **`xero_snapshots.trade_payables` is near-zero by design** (≈£0–£1). NWG pays suppliers via wire transfer outside Xero, so the only bills posted into Xero's Accounts Payable are marketplace-fee residue from the Amazon/eBay journal-integration app. The real "what we owe to suppliers" lives in Linnworks PO deposits and is tracked separately by the dashboard. Do **not** treat a near-zero `trade_payables` as a sync bug.
+- **`xero_snapshots.cogs` is "Purchases + Direct Wages expensed in period", not stock-shipped COGS.** This is a known accounting limitation of Xero's stock model for NWG — the accountant will reconcile via stock-on-hand journals later (out of scope for the dashboard). We capture Xero's number as-is; downstream gross-margin charts inherit the same caveat.
 
 ---
 
