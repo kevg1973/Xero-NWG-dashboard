@@ -176,7 +176,7 @@ Secrets.txt        Local-only credential dump (gitignored, see .gitignore)
 
 **Phase 2 — IN PROGRESS**:
 - ✅ Supplier name resolution (2026-05-11): `Inventory/GetSuppliers` endpoint returns the full UUID→name list as a plain JSON array. New `suppliers` table caches it; PO sync runs supplier sync first, then writes `supplier_name` onto each PO row at upsert time. Frontend reads the cached name, falls back to "Unknown supplier" for historical POs with deleted suppliers (~99 POs from 2012–2023).
-- Linnworks `GetFinancialSummary` sync (sales, refunds, purchases, stock movements)
+- ✅ Linnworks Financial Summary sync (2026-05-11): `Dashboards/GetFinancialSummary` endpoint pulled twice per sync — MTD (1st of month → today) and trailing 90d. New `linnworks_financial_snapshots` table keyed on `(snapshot_date, period_type)`. Scalar columns (sales/refunds/purchases/stock_*) come from the **GBP** currency entry — not the `Combined` rollup, which is polluted by Linnworks' "Unknown" currency bucket with garbage values (~9.9M in a 90d window for a £80k/quarter business). Full payload stored in `raw_response` jsonb. PO sync and financial sync run independently via `runSyncs()` orchestrator — failure of one does not stop the other; each writes its own `sync_log` entry.
 - Xero OAuth flow + refresh-token storage in Supabase
 - Xero P&L + balance sheet pull
 - Snapshot tables for time-series (monthly aggregates)
@@ -200,6 +200,7 @@ Secrets.txt        Local-only credential dump (gitignored, see .gitignore)
 4. `0004_drop_user_actual_delivery.sql` — replaced user-editable `actual_delivery_date` with Linnworks-owned `delivery_date`
 5. `0005_add_line_counts.sql` — `line_count` + `delivered_lines_count` for partial-delivery display
 6. `0006_add_suppliers_table.sql` — `suppliers` cache table (linnworks_supplier_id PK, supplier_name, updated_at) + RLS
+7. `0007_add_financial_snapshots.sql` — `linnworks_financial_snapshots` table (snapshot_date, period_type, scalars + raw_response jsonb) unique on (snapshot_date, period_type) + RLS
 
 **`purchase_orders`** — split ownership:
 
@@ -305,7 +306,8 @@ npm run typecheck
 
 ## 8. Open questions / known gaps
 
-- **Supplier names**: `supplier_name` column always null today. Phase 2 needs to call a Linnworks endpoint (e.g. `GetSupplier` or similar — endpoint TBD) and either backfill or resolve on the fly. UI shows "supplier name pending" placeholder.
+- **PO sync diagnostic counts misreport inserts vs updates**: The pre-upsert SELECT in `backend/src/linnworks/sync.ts` reads the whole `purchase_orders` table to build an existingMap. Supabase JS caps `.select()` at 1000 rows by default; with ~3000 rows the map is incomplete, so rows past that cap get classified as "inserts" even though they exist. The `.upsert(... onConflict ...)` itself is correct — only the reported inserts/updates/unchanged counts are wrong. Fix: add `.range(0, 9999)` or paginate the SELECT.
+- **Foreign-currency rollup in financial snapshots**: We pick the GBP entry. Linnworks' `Combined` rollup is unreliable when "Unknown" currency rows exist. If we ever want true multi-currency totals, query `raw_response` jsonb directly.
 - **`Search_PurchaseOrders` v1 deprecation**: We're on v2 already (`Search_PurchaseOrders2`), so this is handled. Watch Linnworks changelog in case they sunset v2 too.
 - **Xero OAuth re-consent UI**: Not yet built. Phase 2.
 - **Multi-user**: RLS policies are currently `authenticated → all rows`. When adding more users, swap for `user_id`-scoped policies. The seed setup keeps this easy to migrate.

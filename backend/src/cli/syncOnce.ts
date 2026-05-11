@@ -1,34 +1,21 @@
-import { syncPurchaseOrders, type SyncMode } from "../linnworks/sync.js";
-import { recordSync } from "../db/syncLog.js";
+import { runSyncs } from "../linnworks/runSyncs.js";
+import type { SyncMode } from "../linnworks/sync.js";
 
 async function main() {
   const mode: SyncMode = process.argv.includes("--full") ? "full" : "incremental";
-  const startedAt = Date.now();
-  try {
-    const summary = await syncPurchaseOrders(mode);
-    await recordSync({
-      source: "linnworks_po",
-      trigger: "manual",
-      ok: true,
-      detail: { mode, ...summary, via: "cli" },
-      error: null,
-      duration_ms: Date.now() - startedAt,
-    });
-    console.log(JSON.stringify(summary, null, 2));
-    process.exit(0);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await recordSync({
-      source: "linnworks_po",
-      trigger: "manual",
-      ok: false,
-      detail: { mode, via: "cli" },
-      error: message,
-      duration_ms: Date.now() - startedAt,
-    });
-    console.error("sync failed:", message);
-    process.exit(1);
-  }
+  const result = await runSyncs({ trigger: "manual", mode });
+
+  console.log(JSON.stringify(
+    {
+      ok: result.ok,
+      po: result.po.summary ?? { error: result.po.error },
+      financial: result.financial.summary ?? { error: result.financial.error },
+    },
+    null,
+    2,
+  ));
+
+  process.exit(result.ok ? 0 : 1);
 }
 
 main();

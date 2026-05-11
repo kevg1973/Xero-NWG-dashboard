@@ -1,7 +1,6 @@
 import cron from "node-cron";
 import { env } from "./env.js";
-import { syncPurchaseOrders } from "./linnworks/sync.js";
-import { recordSync } from "./db/syncLog.js";
+import { runSyncs } from "./linnworks/runSyncs.js";
 
 export function startCron() {
   if (!env.ENABLE_CRON) {
@@ -18,31 +17,10 @@ export function startCron() {
   cron.schedule(
     env.SYNC_CRON_EXPRESSION,
     async () => {
-      const startedAt = Date.now();
       console.log("[cron] sync starting");
-      try {
-        const summary = await syncPurchaseOrders("incremental");
-        await recordSync({
-          source: "linnworks_po",
-          trigger: "cron",
-          ok: true,
-          detail: summary,
-          error: null,
-          duration_ms: Date.now() - startedAt,
-        });
-        console.log("[cron] sync ok", summary);
-      } catch (err) {
-        const message = err instanceof Error ? err.message : String(err);
-        await recordSync({
-          source: "linnworks_po",
-          trigger: "cron",
-          ok: false,
-          detail: null,
-          error: message,
-          duration_ms: Date.now() - startedAt,
-        });
-        console.error("[cron] sync failed:", message);
-      }
+      const result = await runSyncs({ trigger: "cron" });
+      console.log("[cron] po:", result.po.error ? `FAIL ${result.po.error}` : result.po.summary);
+      console.log("[cron] financial:", result.financial.error ? `FAIL ${result.financial.error}` : result.financial.summary);
     },
     { timezone: env.SYNC_CRON_TZ },
   );

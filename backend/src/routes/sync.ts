@@ -1,35 +1,26 @@
 import { Router } from "express";
-import { syncPurchaseOrders, type SyncMode } from "../linnworks/sync.js";
-import { recordSync } from "../db/syncLog.js";
+import { runSyncs } from "../linnworks/runSyncs.js";
+import type { SyncMode } from "../linnworks/sync.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const syncRouter = Router();
 
 syncRouter.post("/sync", requireAuth, async (req, res) => {
   const mode: SyncMode = req.body?.mode === "full" ? "full" : "incremental";
-  const startedAt = Date.now();
+  const result = await runSyncs({ trigger: "manual", mode });
 
-  try {
-    const summary = await syncPurchaseOrders(mode);
-    await recordSync({
-      source: "linnworks_po",
-      trigger: "manual",
-      ok: true,
-      detail: { mode, ...summary },
-      error: null,
-      duration_ms: Date.now() - startedAt,
-    });
-    res.json({ ok: true, ...summary });
-  } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
-    await recordSync({
-      source: "linnworks_po",
-      trigger: "manual",
-      ok: false,
-      detail: { mode },
-      error: message,
-      duration_ms: Date.now() - startedAt,
-    });
-    res.status(500).json({ ok: false, error: message });
-  }
+  /**
+   * Spread the PO summary at the top level for backwards compat with the
+   * existing frontend (which reads fetched/inserts/updates/unchanged). Add the
+   * financial summary as a nested field. `error` reports the first failure.
+   */
+  const body: Record<string, unknown> = {
+    ok: result.ok,
+    ...(result.po.summary ?? {}),
+    financial: result.financial.summary,
+  };
+  const error = result.po.error ?? result.financial.error;
+  if (error) body.error = error;
+
+  res.status(result.ok ? 200 : 500).json(body);
 });
