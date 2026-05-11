@@ -99,7 +99,7 @@ export function POEditPanel({
     <div className="fixed inset-0 bg-ink-900/40 grid place-items-center px-4 z-50">
       <div className="bg-white rounded-lg max-w-lg w-full p-6 space-y-5">
         <div>
-          <h2 className="text-base font-semibold">{po.supplier_name ?? po.po_number ?? "Purchase order"}</h2>
+          <h2 className="text-base font-semibold">{po.supplier_name ?? "Unknown supplier"}</h2>
           <p className="text-xs text-ink-500 mt-0.5">
             {po.po_number ?? po.linnworks_po_id}
             {po.linnworks_status === "DELIVERED" && po.delivery_date && (

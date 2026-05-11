@@ -1,5 +1,6 @@
 import { supabase } from "../db/supabase.js";
 import { searchAllPurchaseOrders, type LinnworksPOHeader } from "./purchaseOrders.js";
+import { syncSuppliers, type SupplierSyncSummary } from "./suppliers.js";
 
 type PORow = {
   linnworks_po_id: string;
@@ -20,6 +21,7 @@ type PORow = {
 
 const COMPARE_KEYS: Array<keyof PORow> = [
   "po_number",
+  "supplier_name",
   "po_date",
   "currency",
   "po_value_original",
@@ -47,12 +49,17 @@ function num(value: unknown): number | null {
   return null;
 }
 
-function mapHeader(h: LinnworksPOHeader, syncedAt: string): PORow {
+function mapHeader(
+  h: LinnworksPOHeader,
+  syncedAt: string,
+  supplierNameById: Map<string, string>,
+): PORow {
+  const supplierId = h.fkSupplierId ?? null;
   return {
     linnworks_po_id: h.pkPurchaseID,
-    linnworks_supplier_id: h.fkSupplierId ?? null,
+    linnworks_supplier_id: supplierId,
     po_number: h.ExternalInvoiceNumber ?? null,
-    supplier_name: null, // resolved in Phase 2 via supplier-name lookup
+    supplier_name: supplierId ? supplierNameById.get(supplierId) ?? null : null,
     po_date: toDateOnly(h.DateOfPurchase),
     currency: (h.Currency ?? "").toUpperCase() || null,
     po_value_original: num(h.TotalCost),
@@ -98,6 +105,7 @@ export type SyncSummary = {
   inserts: number;
   updates: number;
   unchanged: number;
+  suppliers: SupplierSyncSummary;
   durationMs: number;
 };
 
@@ -113,14 +121,25 @@ export type SyncMode = "incremental" | "full";
 export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promise<SyncSummary> {
   const startedAt = Date.now();
 
+  // Supplier sync runs first so we have UUID→name resolution before the PO
+  // upsert. The returned Map is used to populate purchase_orders.supplier_name.
+  const { summary: suppliers, byId: supplierNameById } = await syncSuppliers();
+
   const fromDate = new Date();
   fromDate.setMonth(fromDate.getMonth() - 12);
   const headers = await searchAllPurchaseOrders({ fromDate });
   const syncedAt = new Date().toISOString();
-  const rows = headers.map((h) => mapHeader(h, syncedAt));
+  const rows = headers.map((h) => mapHeader(h, syncedAt, supplierNameById));
 
   if (!rows.length) {
-    return { fetched: 0, inserts: 0, updates: 0, unchanged: 0, durationMs: Date.now() - startedAt };
+    return {
+      fetched: 0,
+      inserts: 0,
+      updates: 0,
+      unchanged: 0,
+      suppliers,
+      durationMs: Date.now() - startedAt,
+    };
   }
 
   /**
@@ -134,7 +153,7 @@ export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promi
   const { data: existing, error: selError } = await supabase
     .from("purchase_orders")
     .select(
-      "linnworks_po_id, po_number, po_date, currency, po_value_original, po_value_gbp, expected_delivery_date, delivery_date, linnworks_status, linnworks_supplier_id, line_count, delivered_lines_count",
+      "linnworks_po_id, po_number, supplier_name, po_date, currency, po_value_original, po_value_gbp, expected_delivery_date, delivery_date, linnworks_status, linnworks_supplier_id, line_count, delivered_lines_count",
     );
   if (selError) {
     console.error("[sync] pre-upsert select error:", selError);
@@ -172,6 +191,7 @@ export async function syncPurchaseOrders(_mode: SyncMode = "incremental"): Promi
     inserts,
     updates,
     unchanged,
+    suppliers,
     durationMs: Date.now() - startedAt,
   };
 }

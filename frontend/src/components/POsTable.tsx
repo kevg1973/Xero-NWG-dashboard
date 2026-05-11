@@ -173,15 +173,13 @@ export function POsTable({
             )}
             {visible.map((po) => {
               const status = derivePOStatus(po);
+              const supplier = po.supplier_name ?? "Unknown supplier";
               return (
                 <tr key={po.id} className="hover:bg-ink-100/50">
                   <td className="px-4 py-3 font-medium text-ink-900">
-                    {po.supplier_name ?? po.po_number ?? `PO ${po.linnworks_po_id.slice(0, 8)}`}
-                    {po.supplier_name && po.po_number && (
+                    {supplier}
+                    {po.po_number && (
                       <div className="text-xs font-normal text-ink-500">{po.po_number}</div>
-                    )}
-                    {!po.supplier_name && (
-                      <div className="text-xs font-normal text-ink-500">supplier name pending</div>
                     )}
                   </td>
                   <td className="px-4 py-3 text-ink-700">{fmtDate(po.po_date)}</td>
