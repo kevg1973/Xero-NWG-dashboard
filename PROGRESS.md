@@ -294,6 +294,8 @@ npm run sync:once          # one-shot sync from CLI, uses .env
 npm run sync:once -- --full  # full mode (currently identical to incremental)
 npm run backfill -- --dry-run   # 12-month historical backfill: preview the plan
 npm run backfill           # ...and execute it (resume-safe; --force / --months=N / --xero-only / --linnworks-only)
+npm run mark-historic-paid              # one-shot: preview marking pre-2026-03-15 never-paid POs as paid-in-full (dry run)
+npm run mark-historic-paid -- --force   # ...and execute (calls SQL fn mark_historic_pos_paid; idempotent; safe to drop the fn after)
 npm run typecheck
 ```
 

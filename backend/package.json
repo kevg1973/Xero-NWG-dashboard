@@ -10,6 +10,7 @@
     "start": "node dist/index.js",
     "sync:once": "tsx src/cli/syncOnce.ts",
     "backfill": "tsx src/cli/backfill.ts",
+    "mark-historic-paid": "tsx src/cli/mark-historic-paid.ts",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
