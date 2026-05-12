@@ -4,7 +4,6 @@ import {
   deliveryStatus,
   paymentStatus,
   statusLabel,
-  STATUS_ORDER,
   type PurchaseOrder,
 } from "../lib/types";
 import { POEditPanel } from "./POEditPanel";
@@ -26,14 +25,90 @@ const DELIVERY_FILTER_LABEL: Record<DeliveryFilter, string> = {
   delivered: "Delivered",
 };
 
+function supplierLabel(po: PurchaseOrder): string {
+  return po.supplier_name ?? "Unknown supplier";
+}
+
 function matchesFilters(
   po: PurchaseOrder,
   pmt: PaymentFilter,
   dlv: DeliveryFilter,
+  supplierQuery: string,
 ): boolean {
   if (pmt !== "any" && paymentStatus(po) !== pmt) return false;
   if (dlv !== "any" && deliveryStatus(po) !== dlv) return false;
+  if (supplierQuery && !supplierLabel(po).toLowerCase().includes(supplierQuery.toLowerCase())) return false;
   return true;
+}
+
+// ---- sorting ----
+type SortKey = "supplier" | "po_date" | "value" | "paid" | "expected";
+type SortDir = "asc" | "desc";
+
+const SORTABLE_COLUMNS: Array<{ key: SortKey; label: string; align: "left" | "right" }> = [
+  { key: "supplier", label: "Supplier", align: "left" },
+  { key: "po_date", label: "PO date", align: "left" },
+  { key: "value", label: "Value", align: "right" },
+  { key: "paid", label: "Paid", align: "left" },
+  { key: "expected", label: "Expected", align: "left" },
+];
+
+function poValue(po: PurchaseOrder): number | null {
+  return po.po_value_gbp ?? po.po_value_original ?? null;
+}
+
+// Amount paid so far — mirrors paidLabel(): "—" / null when nothing is recorded.
+function paidAmount(po: PurchaseOrder): number | null {
+  const terms = po.payment_terms ?? "upfront";
+  if (terms === "upfront") return po.payment_amount ?? null;
+  if (terms === "deposit_balance") {
+    const dep = po.deposit_amount;
+    const bal = po.balance_amount;
+    if (dep != null && bal != null) return dep + bal;
+    if (dep != null) return dep;
+    return null;
+  }
+  return po.balance_amount ?? null; // on_ship
+}
+
+// The date shown in the "Expected" column: delivery_date once delivered, else the ETA.
+function expectedDate(po: PurchaseOrder): string | null {
+  if (po.linnworks_status === "DELIVERED" && po.delivery_date) return po.delivery_date;
+  return po.expected_delivery_date;
+}
+
+function sortValue(po: PurchaseOrder, key: SortKey): string | number | null {
+  switch (key) {
+    case "supplier":
+      return supplierLabel(po).toLowerCase();
+    case "po_date":
+      return po.po_date;
+    case "value":
+      return poValue(po);
+    case "paid":
+      return paidAmount(po);
+    case "expected":
+      return expectedDate(po);
+  }
+}
+
+// Nulls always sort last, regardless of direction.
+function compareBy(a: PurchaseOrder, b: PurchaseOrder, key: SortKey, dir: SortDir): number {
+  const va = sortValue(a, key);
+  const vb = sortValue(b, key);
+  if (va == null && vb == null) return 0;
+  if (va == null) return 1;
+  if (vb == null) return -1;
+  const r =
+    typeof va === "number" && typeof vb === "number"
+      ? va - vb
+      : String(va).localeCompare(String(vb), undefined, { numeric: true, sensitivity: "base" });
+  return dir === "asc" ? r : -r;
+}
+
+function defaultDirFor(key: SortKey): SortDir {
+  // Names read better A→Z; amounts and dates "biggest / most recent first".
+  return key === "supplier" ? "asc" : "desc";
 }
 
 function fmtGbp(value: number | null): string {
@@ -88,19 +163,28 @@ export function POsTable({
   const [editing, setEditing] = useState<PurchaseOrder | null>(null);
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("any");
   const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>("any");
+  const [supplierQuery, setSupplierQuery] = useState("");
+  const [sortKey, setSortKey] = useState<SortKey>("po_date");
+  const [sortDir, setSortDir] = useState<SortDir>("desc");
+
+  function toggleSort(key: SortKey) {
+    if (key === sortKey) {
+      setSortDir((d) => (d === "asc" ? "desc" : "asc"));
+    } else {
+      setSortKey(key);
+      setSortDir(defaultDirFor(key));
+    }
+  }
 
   const visible = useMemo(() => {
     return rows
-      .filter((po) => matchesFilters(po, paymentFilter, deliveryFilter))
+      .filter((po) => matchesFilters(po, paymentFilter, deliveryFilter, supplierQuery))
       .sort((a, b) => {
-        const sa = STATUS_ORDER[derivePOStatus(a)];
-        const sb = STATUS_ORDER[derivePOStatus(b)];
-        if (sa !== sb) return sa - sb;
-        const da = a.po_date ?? "";
-        const db = b.po_date ?? "";
-        return db.localeCompare(da);
+        const r = compareBy(a, b, sortKey, sortDir);
+        // Stable-ish tiebreak so equal keys keep a predictable order.
+        return r !== 0 ? r : (b.po_date ?? "").localeCompare(a.po_date ?? "");
       });
-  }, [rows, paymentFilter, deliveryFilter]);
+  }, [rows, paymentFilter, deliveryFilter, supplierQuery, sortKey, sortDir]);
 
   if (!rows.length) {
     return (
@@ -118,6 +202,16 @@ export function POsTable({
             Showing <span className="text-ink-900 font-medium">{visible.length}</span> of {rows.length} POs
           </div>
           <div className="flex items-center gap-4">
+            <label className="flex items-center gap-2 text-sm">
+              <span className="text-ink-500">Supplier</span>
+              <input
+                type="text"
+                value={supplierQuery}
+                onChange={(e) => setSupplierQuery(e.target.value)}
+                placeholder="Search…"
+                className="border border-ink-300 rounded px-2 py-1 text-sm bg-white w-40 focus:outline-none focus:ring-2 focus:ring-ink-700"
+              />
+            </label>
             <label className="flex items-center gap-2 text-sm">
               <span className="text-ink-500">Payment</span>
               <select
@@ -151,11 +245,20 @@ export function POsTable({
         <table className="w-full text-sm">
           <thead className="sticky top-0 z-10 text-ink-700 text-xs uppercase tracking-wide">
             <tr>
-              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Supplier</th>
-              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">PO date</th>
-              <th className="text-right font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Value</th>
-              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Paid</th>
-              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Expected</th>
+              {SORTABLE_COLUMNS.map((col) => {
+                const active = sortKey === col.key;
+                return (
+                  <th
+                    key={col.key}
+                    onClick={() => toggleSort(col.key)}
+                    aria-sort={active ? (sortDir === "asc" ? "ascending" : "descending") : "none"}
+                    className={`${col.align === "right" ? "text-right" : "text-left"} font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300 cursor-pointer select-none hover:bg-ink-300 ${active ? "text-ink-900" : ""}`}
+                  >
+                    {col.label}
+                    <span className="ml-1 inline-block w-2">{active ? (sortDir === "asc" ? "↑" : "↓") : ""}</span>
+                  </th>
+                );
+              })}
               <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Status</th>
               <th className="px-4 py-2.5 bg-ink-200 border-b border-ink-300"></th>
             </tr>
