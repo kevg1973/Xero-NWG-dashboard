@@ -224,7 +224,16 @@ async function main() {
         console.log(`  ✓  revenue=${rev} cogs=${cogs} gross_profit=${probe.gross_profit} — data present at the back of the window.`);
       }
     } catch (err) {
-      console.log(`  (probe failed — Xero not connected? ${err instanceof Error ? err.message : String(err)})`);
+      const msg = err instanceof Error ? err.message : String(err);
+      let hint = "";
+      if (/authenticate data|Invalid ciphertext/i.test(msg)) {
+        hint =
+          "  → AES-GCM decrypt failure: backend/.env's XERO_ENCRYPTION_KEY doesn't match the key the deployed backend used " +
+          "to encrypt xero_auth.refresh_token_encrypted. Copy XERO_ENCRYPTION_KEY (and the other Xero/Supabase/Linnworks vars) from Railway.";
+      } else if (/not connected|reconnect/i.test(msg)) {
+        hint = "  → No usable xero_auth row. Connect Xero in the dashboard, or check backend/.env points at the right Supabase project.";
+      }
+      console.log(`  (probe failed: ${msg})${hint ? `\n${hint}` : ""}`);
     }
 
     const xeroToRun = plan.filter((p) => p.wantXero && !p.skipXero);
