@@ -107,8 +107,9 @@ function compareBy(a: PurchaseOrder, b: PurchaseOrder, key: SortKey, dir: SortDi
 }
 
 function defaultDirFor(key: SortKey): SortDir {
-  // Names read better A→Z; amounts and dates "biggest / most recent first".
-  return key === "supplier" ? "asc" : "desc";
+  // Supplier reads better A→Z; "Expected" defaults to earliest-first ("what's
+  // coming next" is the common question). Other amounts/dates → biggest/newest first.
+  return key === "supplier" || key === "expected" ? "asc" : "desc";
 }
 
 function fmtGbp(value: number | null): string {
