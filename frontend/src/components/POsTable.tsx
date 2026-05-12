@@ -92,7 +92,7 @@ const SORTABLE_COLUMNS: Array<{ key: SortKey; label: string; align: "left" | "ri
   { key: "po_date", label: "PO date", align: "left" },
   { key: "value", label: "Value", align: "right" },
   { key: "status", label: "Status", align: "left" },
-  { key: "expected", label: "Expected", align: "left" },
+  { key: "expected", label: "Delivery", align: "left" },
 ];
 
 function poValue(po: PurchaseOrder): number | null {
