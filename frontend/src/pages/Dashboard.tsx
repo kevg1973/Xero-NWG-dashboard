@@ -186,7 +186,7 @@ function XeroIndicator({ status, onDisconnect }: { status: XeroStatus | null; on
     return (
       <a
         href={xeroConnectUrl()}
-        className="text-sm font-medium text-ink-900 border border-ink-300 rounded px-3 py-1.5 hover:bg-ink-100"
+        className="text-sm font-medium text-white bg-[#13B5EA] rounded px-3 py-1.5 hover:bg-[#0EA5D4] active:bg-[#0EA5D4]"
       >
         Connect Xero
       </a>
