@@ -50,6 +50,11 @@ export function buildAuthUrl(): { url: string; state: string } {
     redirect_uri: env.XERO_REDIRECT_URI,
     scope: SCOPES.join(" "),
     state,
+    // Force Xero to show the consent screen every time. There's no Xero-side
+    // revocation in this app (Disconnect just clears the local xero_auth row),
+    // so without this a "reconnect" after a scope change could silently reuse
+    // the old grant and hand back a token missing the new scopes.
+    prompt: "consent",
   });
   return { url: `${AUTH_BASE}?${params.toString()}`, state };
 }
@@ -118,6 +123,12 @@ export async function exchangeCodeForTokens(code: string): Promise<XeroAuth> {
     }),
   );
 
+  // Xero can silently drop scopes it won't grant — log what was actually
+  // granted vs what we asked for, so a missing scope is obvious in the logs.
+  process.stderr.write(
+    `[xero/token] requested_scope="${SCOPES.join(" ")}" granted_scope="${tokens.scope}"\n`,
+  );
+
   const connections = await fetchConnections(tokens.access_token);
   if (!connections.length) {
     throw new Error("Xero returned no connections for this user");
@@ -175,6 +186,8 @@ export async function refreshTokens(auth: XeroAuth): Promise<XeroAuth> {
     }
     throw err;
   }
+
+  process.stderr.write(`[xero/token] (refresh) granted_scope="${tokens.scope}"\n`);
 
   const expiresAt = new Date(Date.now() + tokens.expires_in * 1000);
   await saveAuth({
