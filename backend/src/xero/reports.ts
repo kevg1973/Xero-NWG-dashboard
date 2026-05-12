@@ -155,69 +155,94 @@ export async function fetchBalanceSheet(asOf: Date): Promise<BalanceSheetResult>
   return { raw, trade_receivables, trade_payables };
 }
 
+/**
+ * Reads the chart of accounts and returns accountID → BankAccountType
+ * ("BANK" | "CREDITCARD" | "PAYPAL" | "NONE" | ""). Only bank-type accounts
+ * have a meaningful BankAccountType; everything else maps to "".
+ */
+export async function fetchAccountTypes(): Promise<Map<string, string>> {
+  const raw = await xeroGet<{ Accounts?: Array<{ AccountID?: string; BankAccountType?: string }> }>(
+    "/Accounts",
+  );
+  const map = new Map<string, string>();
+  for (const a of raw.Accounts ?? []) {
+    if (a.AccountID) map.set(a.AccountID, a.BankAccountType ?? "");
+  }
+  return map;
+}
+
 export type BankSummaryResult = {
   raw: XeroReportEnvelope;
   cash_total: number | null;
+  credit_card_liability: number | null;
 };
 
 /**
- * BankSummary report: lists each bank account with opening/closing balances
- * for a date range. Unlike BalanceSheet, this endpoint *does* honour arbitrary
- * dates — passing fromDate=toDate=asOf gives us a one-day window and the
- * closing balance per account.
+ * BankSummary report: lists every "bank"-type account (real banks, PayPal,
+ * AND credit cards) with opening/closing balances for a date range. Unlike
+ * BalanceSheet, this endpoint honours arbitrary dates — fromDate=toDate=asOf
+ * gives a one-day window and the closing balance per account.
  *
- * Cells per row: [account name, opening, deposits, withdrawals, closing].
- * We trust the "Total" SummaryRow's last cell (closing total) when present;
- * fall back to summing the last cell of every Row.
+ * Cells per row: [account name, opening, cash received, cash spent, FX gain,
+ * closing]. The account's UUID is in cell[0].Attributes (Id="accountID").
+ *
+ * We classify each row by BankAccountType (from fetchAccountTypes):
+ *   - BANK, PAYPAL → cash_total (PayPal stays in cash even though NWG's
+ *     PayPal balance is currently negative — that's a separate mapping issue)
+ *   - CREDITCARD → credit_card_liability (short-term liability, surfaced as
+ *     its own metric rather than netted out — useful working-capital signal)
+ *   - anything else / not found in the chart of accounts → logged as a
+ *     warning and excluded from BOTH totals, so a new account type can never
+ *     silently land in the wrong bucket.
+ *
+ * Returns null/null only if no rows could be classified at all (empty or
+ * unparseable report); a zero in either bucket is a real value.
  */
-export async function fetchBankSummary(asOf: Date): Promise<BankSummaryResult> {
+export async function fetchBankSummary(
+  asOf: Date,
+  accountTypes: Map<string, string>,
+): Promise<BankSummaryResult> {
   const requestedDate = isoDate(asOf);
   const raw = await xeroGet<XeroReportEnvelope<XeroReport>>("/Reports/BankSummary", {
     fromDate: requestedDate,
     toDate: requestedDate,
   });
   logReportDateMismatch("BankSummary", requestedDate, raw);
-  const report = raw.Reports?.[0];
-  const rows = report?.Rows ?? [];
-  const cash_total =
-    findClosingBalanceTotal(rows) ??
-    sumClosingBalances(rows);
 
-  return { raw, cash_total };
-}
-
-/**
- * Look for a SummaryRow labelled "Total"; closing balance is the last cell.
- */
-function findClosingBalanceTotal(rows: XeroRow[]): number | null {
-  const flat = flatten(rows);
-  for (const row of flat) {
-    if (row.RowType !== "SummaryRow") continue;
-    const label = row.Cells?.[0]?.Value ?? "";
-    if (!/^Total$/i.test(label)) continue;
-    const last = row.Cells?.[row.Cells.length - 1];
-    return parseAmount(last);
-  }
-  return null;
-}
-
-/**
- * Fallback: sum the closing-balance cell (last cell) of every Row.
- */
-function sumClosingBalances(rows: XeroRow[]): number | null {
-  const flat = flatten(rows);
-  let total = 0;
-  let found = false;
-  for (const row of flat) {
+  let cash = 0;
+  let credit = 0;
+  let classifiedAny = false;
+  for (const row of flatten(raw.Reports?.[0]?.Rows ?? [])) {
     if (row.RowType !== "Row") continue;
-    const last = row.Cells?.[row.Cells.length - 1];
-    const v = parseAmount(last);
-    if (v != null) {
-      total += v;
-      found = true;
+    const nameCell = row.Cells?.[0];
+    const accountId = nameCell?.Attributes?.find((a) => a.Id === "accountID")?.Value;
+    const closing = parseAmount(row.Cells?.[(row.Cells?.length ?? 1) - 1]);
+    if (closing == null) continue;
+    const type = accountId ? accountTypes.get(accountId) : undefined;
+    if (type === "BANK" || type === "PAYPAL") {
+      cash += closing;
+      classifiedAny = true;
+    } else if (type === "CREDITCARD") {
+      credit += closing;
+      classifiedAny = true;
+    } else {
+      process.stderr.write(
+        `[xero/BankSummary] WARNING unclassified bank account id=${accountId ?? "?"} ` +
+          `name="${nameCell?.Value ?? ""}" bankAccountType=${type ?? "(not in /Accounts)"} ` +
+          `closing=${closing} — excluded from cash_total and credit_card_liability\n`,
+      );
     }
   }
-  return found ? total : null;
+
+  return {
+    raw,
+    cash_total: classifiedAny ? round2(cash) : null,
+    credit_card_liability: classifiedAny ? round2(credit) : null,
+  };
+}
+
+function round2(n: number): number {
+  return Math.round(n * 100) / 100;
 }
 
 /**

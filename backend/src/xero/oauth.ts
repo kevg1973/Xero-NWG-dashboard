@@ -22,6 +22,9 @@ const SCOPES = [
   "accounting.reports.profitandloss.read",
   "accounting.reports.balancesheet.read",
   "accounting.reports.banksummary.read",
+  // GET /Accounts — needed to read each bank account's BankAccountType so we
+  // can split BankSummary balances into cash vs credit-card liability.
+  "accounting.settings.read",
   "offline_access",
 ];
 

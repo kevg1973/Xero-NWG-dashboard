@@ -1,5 +1,5 @@
 import { supabase } from "../db/supabase.js";
-import { fetchProfitAndLoss, fetchBalanceSheet, fetchBankSummary } from "./reports.js";
+import { fetchProfitAndLoss, fetchBalanceSheet, fetchBankSummary, fetchAccountTypes } from "./reports.js";
 
 export type XeroPeriodType = "mtd" | "trailing_90d" | "balance_sheet";
 
@@ -13,6 +13,7 @@ export type XeroSyncSummary = {
     gross_profit: number | null;
     operating_expenses: number | null;
     cash_total: number | null;
+    credit_card_liability: number | null;
     trade_receivables: number | null;
     trade_payables: number | null;
   }>;
@@ -46,12 +47,14 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
   const mtdPnl = await fetchProfitAndLoss(mtdStart, today);
   // P&L trailing 90d
   const trailingPnl = await fetchProfitAndLoss(trailingStart, today);
-  // Balance sheet provides AR/AP. Cash comes from BankSummary instead,
-  // because BalanceSheet rounds `date` to month-end while BankSummary honours
-  // arbitrary dates — important when comparing day-by-day snapshots across
-  // month boundaries.
+  // Balance sheet provides AR/AP. Cash + credit-card liability come from
+  // BankSummary instead, because BalanceSheet rounds `date` to month-end while
+  // BankSummary honours arbitrary dates — important when comparing day-by-day
+  // snapshots across month boundaries. fetchAccountTypes() lets us split the
+  // BankSummary rows into cash (BANK/PAYPAL) vs credit-card liability.
   const balance = await fetchBalanceSheet(today);
-  const bankSummary = await fetchBankSummary(today);
+  const accountTypes = await fetchAccountTypes();
+  const bankSummary = await fetchBankSummary(today, accountTypes);
 
   const rows = [
     {
@@ -64,6 +67,7 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       gross_profit: mtdPnl.gross_profit,
       operating_expenses: mtdPnl.operating_expenses,
       cash_total: null as number | null,
+      credit_card_liability: null as number | null,
       trade_receivables: null as number | null,
       trade_payables: null as number | null,
       raw_response: mtdPnl.raw,
@@ -78,6 +82,7 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       gross_profit: trailingPnl.gross_profit,
       operating_expenses: trailingPnl.operating_expenses,
       cash_total: null,
+      credit_card_liability: null,
       trade_receivables: null,
       trade_payables: null,
       raw_response: trailingPnl.raw,
@@ -92,6 +97,7 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       gross_profit: null,
       operating_expenses: null,
       cash_total: bankSummary.cash_total,
+      credit_card_liability: bankSummary.credit_card_liability,
       trade_receivables: balance.trade_receivables,
       trade_payables: balance.trade_payables,
       raw_response: { balance_sheet: balance.raw, bank_summary: bankSummary.raw },
@@ -116,6 +122,7 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       gross_profit: r.gross_profit,
       operating_expenses: r.operating_expenses,
       cash_total: r.cash_total,
+      credit_card_liability: r.credit_card_liability,
       trade_receivables: r.trade_receivables,
       trade_payables: r.trade_payables,
     })),
