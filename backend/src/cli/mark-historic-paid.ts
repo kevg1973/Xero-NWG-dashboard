@@ -9,6 +9,10 @@
  *
  * Match rule (a row is updated iff ALL hold):
  *   - po_date < CUTOFF
+ *   - po_value_gbp > 0  (the ~1378 £0-value historic POs — overwhelmingly
+ *     pre-2021, where Linnworks didn't carry values — stay untouched rather
+ *     than getting a misleading "paid in full" status / fake payment_date;
+ *     £0 contributes nothing to the cash trend anyway)
  *   - payment_amount IS NULL AND deposit_amount IS NULL AND balance_amount IS NULL
  *     (i.e. no payment of any kind has been recorded — this is the real
  *     "never edited" signal; `payment_terms` is always 'upfront' on every row
@@ -46,14 +50,15 @@ const argv = process.argv.slice(2);
 const FORCE = argv.includes("--force");
 const DRY_RUN = !FORCE || argv.includes("--dry-run"); // dry-run unless --force (and not also --dry-run)
 
-// Shared WHERE clause: po_date < CUTOFF and no payment of any kind recorded.
-// (Inlined per call site — supabase-js's builder types make a generic helper
-// awkward; the chain is short.)
+// Shared WHERE clause: po_date < CUTOFF, po_value_gbp > 0, and no payment of
+// any kind recorded. (Inlined per call site — supabase-js's builder types make
+// a generic helper awkward; the chain is short.)
 async function countMatches(): Promise<number> {
   const { count, error } = await supabase
     .from("purchase_orders")
     .select("id", { count: "exact", head: true })
     .lt("po_date", CUTOFF)
+    .gt("po_value_gbp", 0)
     .is("payment_amount", null)
     .is("deposit_amount", null)
     .is("balance_amount", null);
@@ -71,6 +76,7 @@ async function sumPoValueGbp(): Promise<number> {
       .from("purchase_orders")
       .select("po_value_gbp")
       .lt("po_date", CUTOFF)
+      .gt("po_value_gbp", 0)
       .is("payment_amount", null)
       .is("deposit_amount", null)
       .is("balance_amount", null)
@@ -89,6 +95,7 @@ async function sample(n: number) {
     .from("purchase_orders")
     .select("id, po_number, supplier_name, po_date, po_value_gbp")
     .lt("po_date", CUTOFF)
+    .gt("po_value_gbp", 0)
     .is("payment_amount", null)
     .is("deposit_amount", null)
     .is("balance_amount", null)
@@ -115,7 +122,7 @@ async function main() {
   );
 
   const count = await countMatches();
-  console.log(`Matched rows (po_date < ${CUTOFF}, no payment recorded): ${count}`);
+  console.log(`Matched rows (po_date < ${CUTOFF}, po_value_gbp > 0, no payment recorded): ${count}`);
   if (count === 0) {
     console.log("Nothing to do.");
     return;
