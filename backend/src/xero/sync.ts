@@ -35,7 +35,46 @@ function isoDate(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyncSummary> {
+type XeroSnapshotRow = {
+  snapshot_date: string;
+  period_type: XeroPeriodType;
+  period_start: string | null;
+  period_end: string;
+  revenue: number | null;
+  cogs: number | null;
+  gross_profit: number | null;
+  operating_expenses: number | null;
+  cash_total: number | null;
+  credit_card_liability: number | null;
+  trade_receivables: number | null;
+  trade_payables: number | null;
+  raw_response: unknown;
+};
+
+export type SyncXeroOptions = {
+  /**
+   * Pre-fetched accountID → BankAccountType map. Pass this in bulk runs
+   * (the backfill) so GET /Accounts is called once, not per date. Only
+   * used when includeBalanceSheet is true.
+   */
+  accountTypes?: Map<string, string>;
+  /**
+   * Whether to fetch + write the balance_sheet row (BalanceSheet for AR/AP,
+   * BankSummary for cash/credit-card). Default true. The backfill sets this
+   * false for non-month-end dates: BalanceSheet rounds `date` to month-end,
+   * so a balance_sheet row for a mid-month historical date would carry that
+   * month's month-end AR/AP — a value that's in the future relative to the
+   * snapshot date. Backfill therefore only writes balance_sheet on month-end
+   * dates, where the rounding is a no-op and the value is genuine.
+   */
+  includeBalanceSheet?: boolean;
+};
+
+export async function syncXeroSnapshots(
+  now: Date = new Date(),
+  opts: SyncXeroOptions = {},
+): Promise<XeroSyncSummary> {
+  const includeBalanceSheet = opts.includeBalanceSheet ?? true;
   const today = startOfDay(now);
   const mtdStart = startOfMonth(today);
   const trailingStart = new Date(today);
@@ -43,38 +82,28 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
 
   const snapshotDate = isoDate(today);
 
-  // P&L MTD
   const mtdPnl = await fetchProfitAndLoss(mtdStart, today);
-  // P&L trailing 90d
   const trailingPnl = await fetchProfitAndLoss(trailingStart, today);
-  // Balance sheet provides AR/AP. Cash + credit-card liability come from
-  // BankSummary instead, because BalanceSheet rounds `date` to month-end while
-  // BankSummary honours arbitrary dates — important when comparing day-by-day
-  // snapshots across month boundaries. fetchAccountTypes() lets us split the
-  // BankSummary rows into cash (BANK/PAYPAL) vs credit-card liability.
-  const balance = await fetchBalanceSheet(today);
-  const accountTypes = await fetchAccountTypes();
-  const bankSummary = await fetchBankSummary(today, accountTypes);
 
-  const rows = [
+  const rows: XeroSnapshotRow[] = [
     {
       snapshot_date: snapshotDate,
-      period_type: "mtd" as XeroPeriodType,
+      period_type: "mtd",
       period_start: isoDate(mtdStart),
       period_end: isoDate(today),
       revenue: mtdPnl.revenue,
       cogs: mtdPnl.cogs,
       gross_profit: mtdPnl.gross_profit,
       operating_expenses: mtdPnl.operating_expenses,
-      cash_total: null as number | null,
-      credit_card_liability: null as number | null,
-      trade_receivables: null as number | null,
-      trade_payables: null as number | null,
+      cash_total: null,
+      credit_card_liability: null,
+      trade_receivables: null,
+      trade_payables: null,
       raw_response: mtdPnl.raw,
     },
     {
       snapshot_date: snapshotDate,
-      period_type: "trailing_90d" as XeroPeriodType,
+      period_type: "trailing_90d",
       period_start: isoDate(trailingStart),
       period_end: isoDate(today),
       revenue: trailingPnl.revenue,
@@ -87,10 +116,16 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       trade_payables: null,
       raw_response: trailingPnl.raw,
     },
-    {
+  ];
+
+  if (includeBalanceSheet) {
+    const balance = await fetchBalanceSheet(today);
+    const accountTypes = opts.accountTypes ?? (await fetchAccountTypes());
+    const bankSummary = await fetchBankSummary(today, accountTypes);
+    rows.push({
       snapshot_date: snapshotDate,
-      period_type: "balance_sheet" as XeroPeriodType,
-      period_start: null as string | null,
+      period_type: "balance_sheet",
+      period_start: null,
       period_end: isoDate(today),
       revenue: null,
       cogs: null,
@@ -101,8 +136,8 @@ export async function syncXeroSnapshots(now: Date = new Date()): Promise<XeroSyn
       trade_receivables: balance.trade_receivables,
       trade_payables: balance.trade_payables,
       raw_response: { balance_sheet: balance.raw, bank_summary: bankSummary.raw },
-    },
-  ];
+    });
+  }
 
   const { error } = await supabase
     .from("xero_snapshots")
