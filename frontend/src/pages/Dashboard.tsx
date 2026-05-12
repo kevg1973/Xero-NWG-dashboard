@@ -109,8 +109,14 @@ export function Dashboard() {
             <button
               onClick={onSync}
               disabled={syncing}
-              className="bg-ink-900 text-white text-sm font-medium rounded px-3 py-1.5 hover:bg-ink-700 disabled:opacity-50"
+              className="bg-ink-900 text-white text-sm font-medium rounded px-3 py-1.5 hover:bg-ink-700 disabled:opacity-60 disabled:cursor-not-allowed inline-flex items-center gap-1.5"
             >
+              {syncing && (
+                <span
+                  aria-hidden
+                  className="h-3 w-3 rounded-full border-2 border-white/40 border-t-white animate-spin"
+                />
+              )}
               {syncing ? "Syncing…" : "Sync now"}
             </button>
             <button

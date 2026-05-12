@@ -112,7 +112,7 @@ export function POsTable({
 
   return (
     <>
-      <div className="bg-white border border-ink-300 rounded-lg overflow-hidden">
+      <div className="bg-white border border-ink-300 rounded-lg">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-ink-300">
           <div className="text-sm text-ink-500">
             Showing <span className="text-ink-900 font-medium">{visible.length}</span> of {rows.length} POs
@@ -149,15 +149,15 @@ export function POsTable({
           </div>
         </div>
         <table className="w-full text-sm">
-          <thead className="bg-ink-100 text-ink-500 text-xs uppercase tracking-wide">
+          <thead className="sticky top-0 z-10 text-ink-700 text-xs uppercase tracking-wide">
             <tr>
-              <th className="text-left font-medium px-4 py-2.5">Supplier</th>
-              <th className="text-left font-medium px-4 py-2.5">PO date</th>
-              <th className="text-right font-medium px-4 py-2.5">Value</th>
-              <th className="text-left font-medium px-4 py-2.5">Paid</th>
-              <th className="text-left font-medium px-4 py-2.5">Expected</th>
-              <th className="text-left font-medium px-4 py-2.5">Status</th>
-              <th className="px-4 py-2.5"></th>
+              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Supplier</th>
+              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">PO date</th>
+              <th className="text-right font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Value</th>
+              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Paid</th>
+              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Expected</th>
+              <th className="text-left font-semibold px-4 py-2.5 bg-ink-200 border-b border-ink-300">Status</th>
+              <th className="px-4 py-2.5 bg-ink-200 border-b border-ink-300"></th>
             </tr>
           </thead>
           <tbody className="divide-y divide-ink-300">
