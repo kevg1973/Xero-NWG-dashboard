@@ -1,8 +1,7 @@
 import { Router } from "express";
 import { env } from "../env.js";
-import { buildAuthUrl, consumeState, exchangeCodeForTokens } from "../xero/oauth.js";
-import { loadAuth } from "../xero/authStore.js";
-import { supabase } from "../db/supabase.js";
+import { buildAuthUrl, consumeState, exchangeCodeForTokens, revokeToken } from "../xero/oauth.js";
+import { loadAuth, clearAuth } from "../xero/authStore.js";
 import { requireAuth } from "../middleware/auth.js";
 
 export const xeroRouter = Router();
@@ -64,8 +63,14 @@ xeroRouter.get("/callback", async (req, res) => {
 });
 
 /**
- * Authenticated — frontend polls this to decide whether to show the
- * "Connect Xero" button. Returns no token material.
+ * Authenticated — frontend polls this to decide which Xero control to show.
+ * Returns no token material.
+ *  - no row                  → { connected: false, needs_reconnection: false }  ("Connect Xero")
+ *  - row with needs_reauth    → { connected: false, needs_reconnection: true  }  ("Reconnect Xero")
+ *  - healthy row              → { connected: true,  needs_reconnection: false }  ("Xero · <tenant>")
+ *
+ * needs_reauth is set when a refresh_token exchange is rejected by Xero (see
+ * refreshTokens) — a real, observed dead grant, not an inference from sync_log.
  */
 xeroRouter.get("/status", requireAuth, async (_req, res) => {
   try {
@@ -73,33 +78,31 @@ xeroRouter.get("/status", requireAuth, async (_req, res) => {
     if (!auth) {
       return res.json({ connected: false, needs_reconnection: false, tenant_name: null });
     }
-
-    /**
-     * The brief calls for surfacing "Reconnect Xero" state if the refresh
-     * token has expired (>60 days). We don't actively probe Xero on every
-     * /status call; instead, look at the most recent xero sync_log entry —
-     * if the last sync failed with a reconnect-required error, surface it.
-     * Implicit assumption: the daily cron runs often enough that a 60-day
-     * refresh-token expiry will surface within ~24h.
-     */
-    const { data: lastLog } = await supabase
-      .from("sync_log")
-      .select("ok, error")
-      .eq("source", "xero")
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
-
-    const lastError = (lastLog as { ok: boolean; error: string | null } | null)?.error ?? "";
-    const needs_reconnection = lastLog != null && lastLog.ok === false && /reconnect/i.test(lastError);
-
-    return res.json({
-      connected: true,
-      needs_reconnection,
-      tenant_name: auth.tenant_name,
-    });
+    if (auth.needs_reauth) {
+      return res.json({ connected: false, needs_reconnection: true, tenant_name: auth.tenant_name });
+    }
+    return res.json({ connected: true, needs_reconnection: false, tenant_name: auth.tenant_name });
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return res.status(500).json({ error: message });
+  }
+});
+
+/**
+ * Authenticated — disconnects Xero. Best-effort server-side token revocation,
+ * then deletes the local xero_auth row (the authoritative state). Idempotent:
+ * returns 200 even if there was nothing to disconnect.
+ */
+xeroRouter.post("/disconnect", requireAuth, async (_req, res) => {
+  try {
+    const auth = await loadAuth();
+    if (auth?.refresh_token) {
+      await revokeToken(auth.refresh_token);
+    }
+    await clearAuth();
+    return res.json({ ok: true });
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    return res.status(500).json({ ok: false, error: message });
   }
 });

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { supabase } from "../lib/supabase";
-import { triggerSync, getXeroStatus, xeroConnectUrl, type XeroStatus } from "../lib/api";
+import { triggerSync, getXeroStatus, xeroConnectUrl, xeroDisconnect, type XeroStatus } from "../lib/api";
 import type { PurchaseOrder } from "../lib/types";
 import { POsTable } from "../components/POsTable";
 
@@ -83,6 +83,17 @@ export function Dashboard() {
     await supabase.auth.signOut();
   }
 
+  async function onDisconnectXero() {
+    if (!window.confirm("Disconnect Xero? You'll need to reconnect to keep syncing data.")) return;
+    try {
+      await xeroDisconnect();
+      setXero({ connected: false, needs_reconnection: false, tenant_name: null });
+      setXeroBanner(null);
+    } catch (e) {
+      setSyncError(e instanceof Error ? e.message : "Failed to disconnect Xero");
+    }
+  }
+
   return (
     <div className="min-h-screen">
       <header className="border-b border-ink-300 bg-white">
@@ -94,7 +105,7 @@ export function Dashboard() {
             </p>
           </div>
           <div className="flex items-center gap-2">
-            <XeroIndicator status={xero} />
+            <XeroIndicator status={xero} onDisconnect={onDisconnectXero} />
             <button
               onClick={onSync}
               disabled={syncing}
@@ -113,6 +124,17 @@ export function Dashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8 space-y-6">
+        {xero?.needs_reconnection && (
+          <div className="text-sm text-amber-900 bg-amber-50 border border-amber-300 rounded px-3 py-2 flex items-center justify-between">
+            <span>Xero connection expired — reconnect to keep syncing P&amp;L and balance-sheet data.</span>
+            <a
+              href={xeroConnectUrl()}
+              className="font-medium text-amber-900 border border-amber-400 rounded px-2.5 py-1 hover:bg-amber-100 whitespace-nowrap ml-3"
+            >
+              Reconnect Xero
+            </a>
+          </div>
+        )}
         {xeroBanner && (
           <div
             className={
@@ -140,19 +162,10 @@ export function Dashboard() {
   );
 }
 
-function XeroIndicator({ status }: { status: XeroStatus | null }) {
+function XeroIndicator({ status, onDisconnect }: { status: XeroStatus | null; onDisconnect: () => void }) {
   if (status == null) return null;
 
-  if (!status.connected) {
-    return (
-      <a
-        href={xeroConnectUrl()}
-        className="text-sm font-medium text-ink-900 border border-ink-300 rounded px-3 py-1.5 hover:bg-ink-100"
-      >
-        Connect Xero
-      </a>
-    );
-  }
+  // Dead grant: reconnect takes priority over the plain "connect" affordance.
   if (status.needs_reconnection) {
     return (
       <a
@@ -163,9 +176,22 @@ function XeroIndicator({ status }: { status: XeroStatus | null }) {
       </a>
     );
   }
+  if (!status.connected) {
+    return (
+      <a
+        href={xeroConnectUrl()}
+        className="text-sm font-medium text-ink-900 border border-ink-300 rounded px-3 py-1.5 hover:bg-ink-100"
+      >
+        Connect Xero
+      </a>
+    );
+  }
   return (
-    <span className="text-xs text-ink-500 px-2 py-1.5">
-      Xero · {status.tenant_name ?? "connected"}
+    <span className="text-xs text-ink-500 px-2 py-1.5 flex items-center gap-2">
+      <span>Xero · {status.tenant_name ?? "connected"}</span>
+      <button onClick={onDisconnect} className="underline hover:text-ink-700">
+        Disconnect
+      </button>
     </span>
   );
 }

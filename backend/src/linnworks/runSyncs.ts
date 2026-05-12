@@ -2,6 +2,7 @@ import { recordSync, type SyncSource } from "../db/syncLog.js";
 import { syncPurchaseOrders, type SyncMode, type SyncSummary } from "./sync.js";
 import { syncFinancialSnapshots, type FinancialSyncSummary } from "./financial.js";
 import { syncXeroSnapshots, type XeroSyncSummary } from "../xero/sync.js";
+import { loadAuth } from "../xero/authStore.js";
 
 /**
  * Orchestrates the full sync. Each step (PO + financial) runs in its own
@@ -63,7 +64,26 @@ export async function runSyncs({
 }): Promise<FullSyncResult> {
   const po = await runStep("linnworks_po", trigger, () => syncPurchaseOrders(mode), { mode });
   const financial = await runStep("linnworks_financial", trigger, () => syncFinancialSnapshots());
-  const xero = await runStep("xero", trigger, () => syncXeroSnapshots());
+
+  // Skip the Xero step entirely (don't fail noisily) when there's no
+  // connection or it's flagged needs_reauth — Linnworks steps still run.
+  let xero: StepResult<XeroSyncSummary>;
+  const xeroAuth = await loadAuth();
+  if (!xeroAuth || xeroAuth.needs_reauth) {
+    const reason = !xeroAuth ? "not_connected" : "needs_reauth";
+    await recordSync({
+      source: "xero",
+      trigger,
+      ok: true,
+      detail: { skipped: reason },
+      error: null,
+      duration_ms: 0,
+    });
+    xero = { summary: null, error: null, durationMs: 0 };
+  } else {
+    xero = await runStep("xero", trigger, () => syncXeroSnapshots());
+  }
+
   return {
     ok: po.error === null && financial.error === null && xero.error === null,
     po,

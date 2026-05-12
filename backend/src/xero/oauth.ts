@@ -1,7 +1,9 @@
 import crypto from "node:crypto";
 import { request } from "undici";
 import { env } from "../env.js";
-import { loadAuth, saveAuth, type XeroAuth } from "./authStore.js";
+import { loadAuth, saveAuth, markNeedsReauth, type XeroAuth } from "./authStore.js";
+
+const REVOCATION_URL = "https://identity.xero.com/connect/revocation";
 
 const AUTH_BASE = "https://login.xero.com/identity/connect/authorize";
 const TOKEN_URL = "https://identity.xero.com/connect/token";
@@ -157,7 +159,32 @@ export async function exchangeCodeForTokens(code: string): Promise<XeroAuth> {
     tenant_name: connection.tenantName,
     scope: tokens.scope,
     last_refreshed_at: new Date(),
+    needs_reauth: false,
   };
+}
+
+/**
+ * Best-effort server-side revocation of a refresh token (and all access tokens
+ * derived from it). Called on Disconnect. Failures are swallowed — the
+ * authoritative state for the dashboard is the local xero_auth row, which the
+ * caller deletes regardless.
+ */
+export async function revokeToken(refreshToken: string): Promise<void> {
+  try {
+    const { statusCode } = await request(REVOCATION_URL, {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        authorization: basicAuthHeader(),
+      },
+      body: new URLSearchParams({ token: refreshToken }).toString(),
+    });
+    if (statusCode < 200 || statusCode >= 300) {
+      process.stderr.write(`[xero/revoke] non-2xx from Xero revocation: ${statusCode}\n`);
+    }
+  } catch (err) {
+    process.stderr.write(`[xero/revoke] failed (ignored): ${err instanceof Error ? err.message : String(err)}\n`);
+  }
 }
 
 export class XeroReconnectRequiredError extends Error {
@@ -183,8 +210,12 @@ export async function refreshTokens(auth: XeroAuth): Promise<XeroAuth> {
     );
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
-    // Xero returns 400 with invalid_grant when the refresh token is dead.
+    // Xero returns 400 with invalid_grant when the refresh token is dead
+    // (grant revoked, or not used within 60 days). The connection can't
+    // recover without a fresh consent — flag it so the dashboard surfaces
+    // "Reconnect" and future syncs skip the Xero step instead of failing.
     if (msg.includes("invalid_grant") || msg.includes(" 400")) {
+      await markNeedsReauth();
       throw new XeroReconnectRequiredError();
     }
     throw err;
@@ -210,17 +241,20 @@ export async function refreshTokens(auth: XeroAuth): Promise<XeroAuth> {
     tenant_name: auth.tenant_name,
     scope: tokens.scope,
     last_refreshed_at: new Date(),
+    needs_reauth: false,
   };
 }
 
 /**
  * Returns a valid auth object, refreshing if the access token has expired
  * (or is within 60s of expiring). Throws XeroReconnectRequiredError if
- * we have no auth row at all, or if the refresh token is dead.
+ * we have no auth row at all, or the connection is flagged needs_reauth,
+ * or the refresh token turns out to be dead.
  */
 export async function getValidAuth(): Promise<XeroAuth> {
   const auth = await loadAuth();
   if (!auth) throw new XeroReconnectRequiredError("Xero not connected");
+  if (auth.needs_reauth) throw new XeroReconnectRequiredError("Xero connection expired — reconnect required");
 
   const now = Date.now();
   const skewMs = 60_000;

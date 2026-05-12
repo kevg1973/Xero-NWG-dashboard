@@ -43,3 +43,9 @@ export async function getXeroStatus(): Promise<XeroStatus> {
 export function xeroConnectUrl(): string {
   return `${backendUrl}/api/xero/connect`;
 }
+
+export async function xeroDisconnect(): Promise<void> {
+  const headers = await authHeader();
+  const res = await fetch(`${backendUrl}/api/xero/disconnect`, { method: "POST", headers });
+  if (!res.ok) throw new Error(`xero/disconnect ${res.status}`);
+}
