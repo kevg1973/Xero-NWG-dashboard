@@ -31,7 +31,10 @@ function supplierLabel(po: PurchaseOrder): string {
   return po.supplier_name ?? "Unknown supplier";
 }
 
-// "Settled" = nothing left to do: paid in full AND delivered. Hidden by default.
+// "Settled" = nothing left to do: paid in full AND delivered. This dashboard
+// only ever shows *outstanding* POs — settled ones are never rendered (the
+// full PO archive lives in Linnworks; there's no value re-surfacing 3000+
+// done-and-dusted rows here).
 function isSettled(po: PurchaseOrder): boolean {
   return paymentStatus(po) === "paid_in_full" && deliveryStatus(po) === "delivered";
 }
@@ -41,9 +44,8 @@ function matchesFilters(
   pmt: PaymentFilter,
   dlv: DeliveryFilter,
   supplierQuery: string,
-  showSettled: boolean,
 ): boolean {
-  if (!showSettled && isSettled(po)) return false;
+  if (isSettled(po)) return false; // always: outstanding-only view
   if (pmt !== "any" && paymentStatus(po) !== pmt) return false;
   if (dlv !== "any" && deliveryStatus(po) !== dlv) return false;
   if (supplierQuery && !supplierLabel(po).toLowerCase().includes(supplierQuery.toLowerCase())) return false;
@@ -177,7 +179,6 @@ export function POsTable({ rows, onChange }: { rows: PurchaseOrder[]; onChange: 
   const [paymentFilter, setPaymentFilter] = useState<PaymentFilter>("any");
   const [deliveryFilter, setDeliveryFilter] = useState<DeliveryFilter>("any");
   const [supplierQuery, setSupplierQuery] = useState("");
-  const [showSettled, setShowSettled] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("po_date");
   const [sortDir, setSortDir] = useState<SortDir>("desc");
   const [page, setPage] = useState(1);
@@ -193,17 +194,17 @@ export function POsTable({ rows, onChange }: { rows: PurchaseOrder[]; onChange: 
 
   const visible = useMemo(() => {
     return rows
-      .filter((po) => matchesFilters(po, paymentFilter, deliveryFilter, supplierQuery, showSettled))
+      .filter((po) => matchesFilters(po, paymentFilter, deliveryFilter, supplierQuery))
       .sort((a, b) => {
         const r = compareBy(a, b, sortKey, sortDir);
         return r !== 0 ? r : (b.po_date ?? "").localeCompare(a.po_date ?? "");
       });
-  }, [rows, paymentFilter, deliveryFilter, supplierQuery, showSettled, sortKey, sortDir]);
+  }, [rows, paymentFilter, deliveryFilter, supplierQuery, sortKey, sortDir]);
 
   // Any change to the visible set jumps back to page 1.
   useEffect(() => {
     setPage(1);
-  }, [paymentFilter, deliveryFilter, supplierQuery, showSettled, sortKey, sortDir]);
+  }, [paymentFilter, deliveryFilter, supplierQuery, sortKey, sortDir]);
 
   const pageCount = Math.max(1, Math.ceil(visible.length / PAGE_SIZE));
   const safePage = Math.min(page, pageCount);
@@ -221,20 +222,10 @@ export function POsTable({ rows, onChange }: { rows: PurchaseOrder[]; onChange: 
     <>
       <div className="bg-white border border-ink-300 rounded-lg">
         <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-ink-300 flex-wrap">
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-ink-500">
-              Showing <span className="text-ink-900 font-medium">{visible.length}</span> of {rows.length} POs
-            </span>
-            <label className="flex items-center gap-1.5 text-ink-500 cursor-pointer select-none">
-              <input
-                type="checkbox"
-                checked={showSettled}
-                onChange={(e) => setShowSettled(e.target.checked)}
-                className="accent-ink-900"
-              />
-              Show settled POs
-            </label>
-          </div>
+          <span className="text-sm text-ink-500">
+            Showing <span className="text-ink-900 font-medium">{visible.length}</span> outstanding{" "}
+            {visible.length === 1 ? "PO" : "POs"}
+          </span>
           <div className="flex items-center gap-4 flex-wrap">
             <label className="flex items-center gap-2 text-sm">
               <span className="text-ink-500">Supplier</span>
